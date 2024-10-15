@@ -59,7 +59,7 @@ func main() {
 		log.Fatal(err)
 	}
 	select {
-	case <-time.After(time.Second * 3):
+	case <-time.After(time.Second * 6):
 		log.Fatal("timeout ack")
 	case msg := <-sig_msg:
 		spl := strings.Split(msg.Subject, ".")
