@@ -1,0 +1,18 @@
+package view_base_control
+
+import (
+	"github.com/frbrno/iot/node/goofy_hawk/web/view"
+	"github.com/frbrno/iot/node/goofy_hawk/web/view/view_base"
+)
+
+const HxTarget = "view_base_control"
+
+templ Layout(v *view.Vars, comp templ.Component) {
+	@view_base.Layout(v, layout(comp))
+}
+
+templ layout(comp templ.Component) {
+	<div class="is-primary">
+		@comp
+	</div>
+}
