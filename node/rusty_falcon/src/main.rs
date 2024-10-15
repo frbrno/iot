@@ -4,7 +4,7 @@
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     hal::{delay, gpio::PinDriver, modem, peripherals::Peripherals, prelude::*},
-    http::client::{Configuration, EspHttpConnection},
+    http::client::EspHttpConnection,
     mqtt::client::*,
     nvs::EspDefaultNvsPartition,
     ota::{EspFirmwareInfoLoader, EspOta, FirmwareInfo},
@@ -15,8 +15,11 @@ use esp_idf_svc::{
 };
 
 use anyhow::{anyhow, Result};
-use embedded_svc::http::{client::Client, Headers, Method};
-use http::header::ACCEPT;
+use embedded_svc::{
+    http::{client::Client, Headers, Method},
+    wifi::{AuthMethod, ClientConfiguration, Configuration},
+};
+
 use log::*;
 
 use serde_json::json;
@@ -32,7 +35,7 @@ const FIRMWARE_MIN_SIZE: usize = size_of::<FirmwareInfo>() + 1024;
 const SSID: &str = env!("WIFI_SSID");
 const PASSWORD: &str = env!("WIFI_PASS");
 
-const HELLO: &str = "HiThere1";
+const HELLO: &str = "HiThere10";
 
 const MQTT_URL: &str = "mqtt://192.168.10.124:1880";
 const MQTT_CLIENT_ID: &str = "rusty_falcon";
@@ -40,12 +43,40 @@ const MQTT_TOPIC: &str = "+/rusty_falcon/+/+/+";
 // {src}.{dst}.stepper1_speed.{get,set,run}.{token}
 // {src}.{dst}.stepper1_speed.{ack,cancel,done,error}.{token}
 
+pub struct Stepper<T: uln2003::StepperMotor> {
+    ext: T,
+}
+
+impl<T: uln2003::StepperMotor> Stepper<T> {
+    pub fn new(ext: T) -> Self {
+        Stepper { ext }
+    }
+
+    /// Do a single step
+    fn step(&mut self) -> Result<(), uln2003::StepError> {
+        self.ext.step()
+    }
+    /// Do multiple steps with a given delay in ms
+    fn step_for(&mut self, steps: i32, delay: u32) -> Result<(), uln2003::StepError> {
+        self.ext.step_for(steps, delay)
+    }
+    /// Set the stepping direction
+    fn set_direction(&mut self, dir: uln2003::Direction) {
+        self.ext.set_direction(dir)
+    }
+    /// Stoping sets all pins low
+    fn stop(&mut self) -> Result<(), uln2003::StepError> {
+        self.ext.stop()
+    }
+}
+
 fn main() {
     esp_idf_svc::sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
     unsafe { esp_wifi_set_max_tx_power(66) };
 
     info!("{:?}", HELLO);
+    info!("ssid: {:?}, pw: {:?}", SSID, PASSWORD);
     let peripherals = esp_idf_svc::hal::peripherals::Peripherals::take().unwrap();
 
     let sys_loop = EspSystemEventLoop::take().unwrap();
@@ -63,6 +94,19 @@ fn main() {
 
     info!("Wifi DHCP info: {:?}", ip_info);
 
+    match wifi.is_connected() {
+        Ok(is) => {
+            if !is {
+                unsafe {
+                    esp_idf_svc::sys::esp_restart();
+                }
+            }
+        }
+        Err(_) => unsafe {
+            esp_idf_svc::sys::esp_restart();
+        },
+    }
+
     let (mut client, mut conn) = mqtt_create(MQTT_URL, MQTT_CLIENT_ID).unwrap();
     let mut stepper1 = ULN2003::new(
         PinDriver::output(peripherals.pins.gpio9).unwrap(),
@@ -72,7 +116,9 @@ fn main() {
         Some(delay::Delay::new_default()),
     );
 
-    let stepper1 = std::sync::Arc::new(std::sync::Mutex::new(stepper1));
+    let mut stepz = Stepper::new(stepper1);
+
+    let stepper1 = std::sync::Arc::new(std::sync::Mutex::new(stepz));
 
     let timer_service = EspTaskTimerService::new().unwrap();
 
@@ -195,6 +241,9 @@ fn main() {
                     info!("spawn worker");
                     let mut timeout = std::time::Duration::from_millis(5);
 
+                    let mut stepper1_home_position_set = false;
+                    let mut stepper1_current_position = 0u64;
+
                     let fn_stepper1_speed =
                         |data: &event::DataReqRunStepper1Speed,
                          ctx: event::Context,
@@ -269,7 +318,7 @@ fn main() {
                                             //wait done message is out
                                             std::thread::sleep(std::time::Duration::from_secs(3));
                                             unsafe {
-                                                esp_idf_sys::esp_restart();
+                                                esp_idf_svc::sys::esp_restart();
                                             }
                                         }
                                         Err(err) => {
@@ -284,6 +333,14 @@ fn main() {
                                 event::Action::ActionRun(event::ActionRun::Stop()) => {
                                     continue 'loop_recv
                                 }
+                                event::Action::ActionRun(
+                                    event::ActionRun::Stepper1SetHomePosition(),
+                                ) => {
+                                    stepper1_home_position_set = true;
+                                    stepper1_current_position = 0;
+                                    continue 'loop_recv;
+                                }
+
                                 event::Action::ActionRun(event::ActionRun::Stepper1SpeedLeft {
                                     ref data,
                                 }) => {
@@ -340,17 +397,15 @@ fn mqtt_create(
 
     Ok((mqtt_client, mqtt_conn))
 }
-
 fn connect_wifi(wifi: &mut BlockingWifi<EspWifi<'static>>) -> anyhow::Result<()> {
-    let wifi_configuration: embedded_svc::wifi::Configuration =
-        embedded_svc::wifi::Configuration::Client(ClientConfiguration {
-            ssid: SSID.try_into().unwrap(),
-            bssid: None,
-            auth_method: embedded_svc::wifi::AuthMethod::WPA2Personal,
-            password: PASSWORD.try_into().unwrap(),
-            channel: None,
-            ..Default::default()
-        });
+    let wifi_configuration: Configuration = Configuration::Client(ClientConfiguration {
+        ssid: SSID.try_into().unwrap(),
+        bssid: None,
+        auth_method: AuthMethod::WPA2Personal,
+        password: PASSWORD.try_into().unwrap(),
+        channel: None,
+        ..Default::default()
+    });
 
     wifi.set_configuration(&wifi_configuration)?;
 
@@ -366,36 +421,6 @@ fn connect_wifi(wifi: &mut BlockingWifi<EspWifi<'static>>) -> anyhow::Result<()>
     Ok(())
 }
 
-fn wifi_create(
-    peripherals: esp_idf_svc::hal::peripherals::Peripherals,
-    sys_loop: &EspSystemEventLoop,
-    nvs: &EspDefaultNvsPartition,
-    //peripherals: &esp_idf_svc::hal::peripherals::Peripherals,
-) -> Result<EspWifi<'static>, EspError> {
-    //let peripherals = esp_idf_svc::hal::peripherals::Peripherals::take()?;
-    let mut esp_wifi = EspWifi::new(peripherals.modem, sys_loop.clone(), Some(nvs.clone()))?;
-    let mut wifi = BlockingWifi::wrap(&mut esp_wifi, sys_loop.clone())?;
-
-    wifi.set_configuration(&esp_idf_svc::wifi::Configuration::Client(
-        ClientConfiguration {
-            ssid: SSID.try_into().unwrap(),
-            password: PASSWORD.try_into().unwrap(),
-            ..Default::default()
-        },
-    ))?;
-
-    wifi.start()?;
-    info!("Wifi started");
-
-    wifi.connect()?;
-    info!("Wifi connected");
-
-    wifi.wait_netif_up()?;
-    info!("Wifi netif up");
-
-    Ok(esp_wifi)
-}
-
 fn get_firmware_info(buff: &[u8]) -> Result<FirmwareInfo, EspError> {
     let mut loader = EspFirmwareInfoLoader::new();
     loader.load(buff)?;
@@ -409,12 +434,16 @@ macro_rules! esp_err {
 }
 
 pub fn simple_download_and_update_firmware(url: String) -> Result<(), EspError> {
-    let mut client = Client::wrap(EspHttpConnection::new(&Configuration {
-        buffer_size: Some(1024 * 4),
-        ..Default::default()
-    })?);
+    let mut client = Client::wrap(EspHttpConnection::new(
+        &esp_idf_svc::http::client::Configuration {
+            buffer_size: Some(1024 * 4),
+            ..Default::default()
+        },
+    )?);
 
-    let headers = [(ACCEPT.as_str(), mime::APPLICATION_OCTET_STREAM.as_ref())];
+    let headers = [("accept", "application/octet-stream")];
+
+    //let headers = [(ACCEPT.as_str(), mime::APPLICATION_OCTET_STREAM.as_ref())];
     let surl = url.to_string();
     let request = client
         .request(Method::Get, &surl, &headers)

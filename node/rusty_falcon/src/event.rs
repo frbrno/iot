@@ -70,6 +70,7 @@ pub enum ActionRun {
     Stepper1Speed { data: DataReqRunStepper1Speed },
     Stepper1SpeedLeft { data: DataReqRunStepper1Speed },
     Stepper1SpeedRight { data: DataReqRunStepper1Speed },
+    Stepper1SetHomePosition(),
     Stop(),
     UpdateBoard { data: DataReqRunUpdateBoard },
 }
