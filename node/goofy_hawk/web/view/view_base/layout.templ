@@ -1,0 +1,112 @@
+
+package view_base
+
+import "github.com/frbrno/iot/node/goofy_hawk/web/view"
+
+const HxTarget = "view_base"
+
+templ Layout(v *view.Vars, comp templ.Component) {
+	@layout(v, comp)
+}
+
+templ layout(v *view.Vars, comp templ.Component) {
+	if v.HxTargetHasPrefix(HxTarget) {
+		@comp
+		if v.HxTargetEquals(HxTarget) {
+			@navbar(v, true)
+		}
+		<title hx-swap-oob="true">{ v.Title }</title>
+	} else {
+		<!DOCTYPE html>
+		<html lang="en">
+			<head>
+				<meta charset="utf-8"/>
+				<meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+				<meta name="viewport" content="width=device-width, initial-scale=1"/>
+				<title>{ v.Title }</title>
+				<link rel="stylesheet" href="/static/bulma.min.css"/>
+				<link rel="stylesheet" href="/static/fontawesome/css/fontawesome.css"/>
+				<link rel="stylesheet" href="/static/fontawesome/css/brands.css"/>
+				<link rel="stylesheet" href="/static/fontawesome/css/solid.css"/>
+				// <link rel="stylesheet" href="/static/my.css"/>
+			</head>
+			<body class="has-navbar-fixed-top">
+				@navbar(v, false)
+				<section
+					{ view.AttrFunc(func(a view.Attr) {
+						a.ID(HxTarget)
+						a.Class("section")
+					})... }
+				>
+					@comp
+				</section>
+				<script src="/static/htmx.min.js"></script>
+				<script src="/static/htmx_sse.min.js"></script>
+			</body>
+		</html>
+	}
+}
+
+templ navbar(v *view.Vars, oob bool) {
+	<nav
+		id="base_nav"
+		if oob {
+			hx-swap-oob="true"
+		}
+		class="navbar is-fixed-top is-link"
+		role="navigation"
+		aria-label="main navigation"
+	>
+		<div class="container is-widescreen">
+			<div class="navbar-brand">
+				<a
+					{ view.AttrFunc(func(a view.Attr) {
+						a.HxGet("/")
+						a.HxTarget(HxTarget)
+						a.HxPushUrl(true)
+						a.Class("navbar-item")						
+					})... }
+				>Home</a>
+				<a
+					role="button"
+					class="navbar-burger"
+					aria-label="menu"
+					aria-expanded="false"
+					data-target="navbarBasicExample"
+				>
+					<span aria-hidden="true"></span>
+					<span aria-hidden="true"></span>
+					<span aria-hidden="true"></span>
+				</a>
+			</div>
+			<div id="navbarBasicExample" class="navbar-menu">
+				<div class="navbar-start">
+					<a
+						{ view.AttrFunc(func(a view.Attr) {
+							a.HxGet("/control")
+							a.HxTarget(HxTarget)
+							a.HxPushUrl(true)
+							a.Class("navbar-item")
+							if v.HxTargetHasPrefix(HxTarget){
+								a.Class("is-active")
+							}
+						})... }
+					>Control</a>
+				</div>
+				<div class="navbar-end">
+					<div class="navbar-item">
+						<div class="buttons">
+							<form action="/logout" method="post">
+								<div class="field">
+									<button type="submit" class="button is-danger">
+										logout
+									</button>
+								</div>
+							</form>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</nav>
+}
