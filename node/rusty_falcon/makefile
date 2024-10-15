@@ -6,3 +6,9 @@ release:
 
 upload: release
 	update_board #node/goofy_hawk/cmd/update_board
+
+run:
+	cargo run
+
+print_vars:
+	@echo $(WIFI_SSID)
