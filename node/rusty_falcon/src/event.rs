@@ -15,6 +15,7 @@ pub fn action_from_mqtt(topic: &str, data: &[u8]) -> Result<(Action, Context)> {
     };
 
     match (ctx.action.as_str(), ctx.cmd.as_str()) {
+        ("get", "stepper1_state") => Ok((Action::ActionGet(ActionGet::Stepper1State()), ctx)),
         ("run", "stepper1_speed") => Ok((
             Action::ActionRun(ActionRun::Stepper1Speed {
                 data: serde_json::from_slice(data)?,
@@ -61,6 +62,23 @@ pub enum Event {
     Action((Action, Context)),
 }
 
+pub fn reply_ack(data: Option<ReplyData>, ctx: Context) -> Event {
+    Event::ActionReply((ActionReply::Ack { data: data }, ctx))
+}
+
+pub fn reply_done(data: Option<ReplyData>, ctx: Context) -> Event {
+    Event::ActionReply((ActionReply::Done { data: data }, ctx))
+}
+
+pub fn reply_error(msg: String, ctx: Context) -> Event {
+    Event::ActionReply((
+        ActionReply::Error {
+            data: Some(ReplyData::WithString(msg)),
+        },
+        ctx,
+    ))
+}
+
 pub enum Action {
     ActionRun(ActionRun),
     ActionGet(ActionGet),
@@ -76,33 +94,52 @@ pub enum ActionRun {
 }
 
 pub enum ActionGet {
-    Name(),
+    Stepper1State(),
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum ActionReply {
-    Ack(),
-    Done(),
-    DoneWithData { data: String },
+    Ack { data: Option<ReplyData> },
+    Done { data: Option<ReplyData> },
     Cancel(),
-    Error(),
+    Error { data: Option<ReplyData> },
+}
+
+impl ActionReply {
+    pub fn data(&self) -> &Option<ReplyData> {
+        match self {
+            ActionReply::Ack { data } => data,
+            ActionReply::Done { data } => data,
+            ActionReply::Error { data } => data,
+            ActionReply::Cancel() => &None,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ReplyData {
+    WithString(String),
+    Stepper1State {
+        current_position: usize,
+        direction: String,
+    },
 }
 
 impl ActionReply {
     pub fn topic(&self, ctx: &Context) -> String {
         match self {
-            ActionReply::Ack() => {
+            ActionReply::Ack { .. } => {
                 format!("{}/{}/{}/ack/{}", ctx.dst, ctx.src, ctx.cmd, ctx.token)
             }
-            ActionReply::Done() => {
-                format!("{}/{}/{}/done/{}", ctx.dst, ctx.src, ctx.cmd, ctx.token)
-            }
-            ActionReply::DoneWithData { data } => {
+            ActionReply::Done { .. } => {
                 format!("{}/{}/{}/done/{}", ctx.dst, ctx.src, ctx.cmd, ctx.token)
             }
             ActionReply::Cancel() => {
                 format!("{}/{}/{}/cancel/{}", ctx.dst, ctx.src, ctx.cmd, ctx.token)
             }
-            ActionReply::Error() => {
+            ActionReply::Error { .. } => {
                 format!("{}/{}/{}/error/{}", ctx.dst, ctx.src, ctx.cmd, ctx.token)
             }
         }
@@ -117,4 +154,10 @@ pub struct DataReqRunStepper1Speed {
 #[derive(Serialize, Deserialize)]
 pub struct DataReqRunUpdateBoard {
     pub url: String,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct ReplyStepper1State {
+    pub current_position: usize,
+    pub direction: String,
 }
