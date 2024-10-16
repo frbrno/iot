@@ -16,6 +16,12 @@ pub fn action_from_mqtt(topic: &str, data: &[u8]) -> Result<(Action, Context)> {
 
     match (ctx.action.as_str(), ctx.cmd.as_str()) {
         ("get", "stepper1_state") => Ok((Action::ActionGet(ActionGet::Stepper1State()), ctx)),
+        ("run", "stepper1_move_to") => Ok((
+            Action::ActionRun(ActionRun::Stepper1MoveTo {
+                data: serde_json::from_slice(data)?,
+            }),
+            ctx,
+        )),
         ("run", "stepper1_speed") => Ok((
             Action::ActionRun(ActionRun::Stepper1Speed {
                 data: serde_json::from_slice(data)?,
@@ -89,6 +95,7 @@ pub enum ActionRun {
     Stepper1SpeedLeft { data: DataReqRunStepper1Speed },
     Stepper1SpeedRight { data: DataReqRunStepper1Speed },
     Stepper1SetHomePosition(),
+    Stepper1MoveTo { data: RequestStepper1MoveTo },
     Stop(),
     UpdateBoard { data: DataReqRunUpdateBoard },
 }
@@ -124,7 +131,7 @@ pub enum ReplyData {
         message: String,
     },
     Stepper1State {
-        current_position: usize,
+        position_current: usize,
         direction: String,
     },
 }
@@ -154,12 +161,18 @@ pub struct DataReqRunStepper1Speed {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct RequestStepper1MoveTo {
+    pub position_final: usize,
+    pub step_delay_micros: usize,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct DataReqRunUpdateBoard {
     pub url: String,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct ReplyStepper1State {
-    pub current_position: usize,
+    pub position_current: usize,
     pub direction: String,
 }
