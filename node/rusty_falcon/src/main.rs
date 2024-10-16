@@ -1,6 +1,11 @@
 #![allow(dead_code)]
 #![allow(unused)]
 
+use anyhow::{anyhow, Result};
+use embedded_svc::{
+    http::{client::Client, Headers, Method},
+    wifi::{AuthMethod, ClientConfiguration, Configuration},
+};
 use esp_idf_svc::{
     eventloop::EspSystemEventLoop,
     hal::{delay, gpio::PinDriver, modem, peripherals::Peripherals, prelude::*},
@@ -13,29 +18,21 @@ use esp_idf_svc::{
     timer::EspTaskTimerService,
     wifi::*,
 };
-
-use anyhow::{anyhow, Result};
-use embedded_svc::{
-    http::{client::Client, Headers, Method},
-    wifi::{AuthMethod, ClientConfiguration, Configuration},
-};
-
+use event::ActionReply;
 use log::*;
-
 use serde_json::json;
 use uln2003::{StepperMotor, ULN2003};
 
 mod event;
 
 const FIRMWARE_DOWNLOAD_CHUNK_SIZE: usize = 1024 * 20;
-// Not expect firmware bigger than 2MB
 const FIRMWARE_MAX_SIZE: usize = 1024 * 1024 * 2;
 const FIRMWARE_MIN_SIZE: usize = size_of::<FirmwareInfo>() + 1024;
 
 const SSID: &str = env!("WIFI_SSID");
 const PASSWORD: &str = env!("WIFI_PASS");
 
-const HELLO: &str = "HiThere10";
+const HELLO: &str = "HiThere11";
 
 const MQTT_URL: &str = "mqtt://192.168.10.124:1880";
 const MQTT_CLIENT_ID: &str = "rusty_falcon";
@@ -45,16 +42,32 @@ const MQTT_TOPIC: &str = "+/rusty_falcon/+/+/+";
 
 pub struct Stepper<T: uln2003::StepperMotor> {
     ext: T,
+    current_position: usize,
+    direction: uln2003::Direction,
 }
 
 impl<T: uln2003::StepperMotor> Stepper<T> {
     pub fn new(ext: T) -> Self {
-        Stepper { ext }
+        Stepper {
+            ext,
+            current_position: 0,
+            direction: uln2003::Direction::Normal, //in my case 'right'
+        }
     }
 
-    /// Do a single step
+    // ~190000 steps for my 2m linear rail
     fn step(&mut self) -> Result<(), uln2003::StepError> {
-        self.ext.step()
+        match self.direction {
+            uln2003::Direction::Reverse => {
+                if self.current_position > 0 {
+                    self.current_position -= 1;
+                }
+            }
+            uln2003::Direction::Normal => {
+                self.current_position += 1;
+            }
+        }
+        self.ext.step() //TODO error?
     }
     /// Do multiple steps with a given delay in ms
     fn step_for(&mut self, steps: i32, delay: u32) -> Result<(), uln2003::StepError> {
@@ -62,6 +75,10 @@ impl<T: uln2003::StepperMotor> Stepper<T> {
     }
     /// Set the stepping direction
     fn set_direction(&mut self, dir: uln2003::Direction) {
+        match dir {
+            uln2003::Direction::Normal => self.direction = uln2003::Direction::Normal,
+            uln2003::Direction::Reverse => self.direction = uln2003::Direction::Reverse,
+        }
         self.ext.set_direction(dir)
     }
     /// Stoping sets all pins low
@@ -108,17 +125,14 @@ fn main() {
     }
 
     let (mut client, mut conn) = mqtt_create(MQTT_URL, MQTT_CLIENT_ID).unwrap();
-    let mut stepper1 = ULN2003::new(
+
+    let stepper1 = std::sync::Arc::new(std::sync::Mutex::new(Stepper::new(ULN2003::new(
         PinDriver::output(peripherals.pins.gpio9).unwrap(),
         PinDriver::output(peripherals.pins.gpio8).unwrap(),
         PinDriver::output(peripherals.pins.gpio7).unwrap(),
         PinDriver::output(peripherals.pins.gpio6).unwrap(),
         Some(delay::Delay::new_default()),
-    );
-
-    let mut stepz = Stepper::new(stepper1);
-
-    let stepper1 = std::sync::Arc::new(std::sync::Mutex::new(stepz));
+    ))));
 
     let timer_service = EspTaskTimerService::new().unwrap();
 
@@ -192,11 +206,38 @@ fn main() {
                 break;
             }
             client.enqueue(
-                format!("rusty_falcon/hello/{:?}", HELLO.to_string()).as_str(),
+                format!("rusty_falcon/hello/{:}", HELLO.to_string()).as_str(),
                 QoS::AtMostOnce,
                 false,
                 &[0],
             );
+
+            let mut fn_action_reply = |reply: event::ActionReply, ctx: event::Context| {
+                let topic = reply.topic(&ctx).to_string();
+                match reply.data() {
+                    Some(data) => match serde_json::to_string(&data) {
+                        Ok(data) => {
+                            client.enqueue(topic.as_str(), QoS::AtMostOnce, false, data.as_bytes());
+                        }
+                        Err(err) => {
+                            let reply = ActionReply::Error {
+                                data: Some(event::ReplyData::WithString(err.to_string())),
+                            };
+                            let data = serde_json::to_string(&reply).unwrap();
+                            client.enqueue(
+                                reply.topic(&ctx).as_str(),
+                                QoS::AtMostOnce,
+                                false,
+                                data.as_bytes(),
+                            );
+                        }
+                    },
+                    None => {
+                        client.enqueue(topic.as_str(), QoS::AtMostOnce, false, &[0]);
+                    }
+                }
+            };
+
             loop {
                 let mut event = rx_event.recv().unwrap();
                 match event {
@@ -204,28 +245,7 @@ fn main() {
                         let _ = tx_worker_from_eventer.send((action, ctx));
                     }
                     event::Event::ActionReply((reply, ctx)) => {
-                        let topic = reply.topic(&ctx).to_string();
-
-                        match reply {
-                            event::ActionReply::DoneWithData { data } => {
-                                client.enqueue(
-                                    topic.as_str(),
-                                    QoS::AtMostOnce,
-                                    false,
-                                    data.as_bytes(),
-                                );
-                                continue;
-                            }
-                            _ => {
-                                client.enqueue(
-                                    reply.topic(&ctx).as_str(),
-                                    QoS::AtMostOnce,
-                                    false,
-                                    &[0],
-                                );
-                                continue;
-                            }
-                        }
+                        fn_action_reply(reply, ctx);
                     }
 
                     _ => std::panic!("not handled yet"),
@@ -251,10 +271,7 @@ fn main() {
                          -> Option<(event::Action, event::Context)> {
                             // let mut result: Option<(event::Action, event::Context)> = None;
 
-                            tx_eventer_from_worker.send(event::Event::ActionReply((
-                                event::ActionReply::Ack(),
-                                ctx.clone(),
-                            )));
+                            tx_eventer_from_worker.send(event::reply_ack(None, ctx.clone()));
 
                             let step_delay = std::time::Duration::from_micros(data.speed);
                             let mut stepper_guard = stepper1.lock().unwrap();
@@ -297,80 +314,80 @@ fn main() {
                             let action = recv.0;
                             let ctx = recv.1;
                             match action {
-                                event::Action::ActionRun(event::ActionRun::UpdateBoard {
-                                    data,
-                                }) => {
-                                    tx_eventer_from_worker.send(event::Event::ActionReply((
-                                        event::ActionReply::Ack(),
-                                        ctx.clone(),
-                                    )));
-                                    /*
-                                      https://quan.hoabinh.vn/post/2024/3/programming-esp32-with-rust-ota-firmware-update
-                                      https://docs.rs/crate/esp-ota/latest
-                                      cargo build --release
-                                      espflash save-image --chip esp32c3 -s 4mb target/riscv32imc-esp-espidf/release/rusty_falcon /tmp/rusty_falcon.bin
-                                    */
-                                    match simple_download_and_update_firmware(data.url) {
-                                        Ok(_) => {
-                                            tx_eventer_from_worker.send(event::Event::ActionReply(
-                                                (event::ActionReply::Done(), ctx),
-                                            ));
-                                            //wait done message is out
-                                            std::thread::sleep(std::time::Duration::from_secs(3));
-                                            unsafe {
-                                                esp_idf_svc::sys::esp_restart();
+                                event::Action::ActionGet((action_get)) => match action_get {
+                                    event::ActionGet::Stepper1State() => {
+                                        let guard = stepper1.lock().unwrap();
+                                        let mut direction = "";
+                                        match guard.direction {
+                                            uln2003::Direction::Normal => direction = "left",
+                                            uln2003::Direction::Reverse => direction = "right",
+                                        }
+                                        let mut data = event::ReplyData::Stepper1State {
+                                            current_position: guard.current_position,
+                                            direction: direction.to_string(),
+                                        };
+                                        drop(guard);
+
+                                        tx_eventer_from_worker
+                                            .send(event::reply_ack(Some(data), ctx.clone()));
+                                        continue 'loop_recv;
+                                    }
+                                },
+                                event::Action::ActionRun((action_run)) => match action_run {
+                                    event::ActionRun::Stop() => continue 'loop_recv,
+                                    event::ActionRun::Stepper1SpeedLeft { ref data } => {
+                                        match fn_stepper1_speed(
+                                            data,
+                                            ctx.clone(),
+                                            uln2003::Direction::Normal,
+                                        ) {
+                                            Some(recv_new) => {
+                                                recv = recv_new;
+                                                continue 'loop_match;
+                                            }
+                                            None => continue 'loop_recv,
+                                        }
+                                    }
+                                    event::ActionRun::Stepper1SpeedRight { ref data } => {
+                                        match fn_stepper1_speed(
+                                            data,
+                                            ctx.clone(),
+                                            uln2003::Direction::Reverse,
+                                        ) {
+                                            Some(recv_new) => {
+                                                recv = recv_new;
+                                                continue 'loop_match;
+                                            }
+                                            None => continue 'loop_recv,
+                                        }
+                                    }
+                                    event::ActionRun::UpdateBoard { data } => {
+                                        tx_eventer_from_worker
+                                            .send(event::reply_ack(None, ctx.clone()));
+
+                                        match simple_download_and_update_firmware(data.url) {
+                                            Ok(_) => {
+                                                tx_eventer_from_worker
+                                                    .send(event::reply_done(None, ctx.clone()));
+
+                                                //wait done message is out
+                                                std::thread::sleep(std::time::Duration::from_secs(
+                                                    3,
+                                                ));
+                                                unsafe {
+                                                    esp_idf_svc::sys::esp_restart();
+                                                }
+                                            }
+                                            Err(err) => {
+                                                info!("worker update_board err: {:?}", err);
+                                                tx_eventer_from_worker
+                                                    .send(event::reply_error(err.to_string(), ctx));
                                             }
                                         }
-                                        Err(err) => {
-                                            info!("worker update_board err: {:?}", err);
-                                            tx_eventer_from_worker.send(event::Event::ActionReply(
-                                                (event::ActionReply::Error(), ctx),
-                                            ));
-                                        }
+                                        continue 'loop_recv;
                                     }
-                                    continue 'loop_recv;
-                                }
-                                event::Action::ActionRun(event::ActionRun::Stop()) => {
-                                    continue 'loop_recv
-                                }
-                                event::Action::ActionRun(
-                                    event::ActionRun::Stepper1SetHomePosition(),
-                                ) => {
-                                    stepper1_home_position_set = true;
-                                    stepper1_current_position = 0;
-                                    continue 'loop_recv;
-                                }
-
-                                event::Action::ActionRun(event::ActionRun::Stepper1SpeedLeft {
-                                    ref data,
-                                }) => {
-                                    match fn_stepper1_speed(
-                                        data,
-                                        ctx.clone(),
-                                        uln2003::Direction::Normal,
-                                    ) {
-                                        Some(recv_new) => {
-                                            recv = recv_new;
-                                            continue 'loop_match;
-                                        }
-                                        None => continue 'loop_recv,
-                                    }
-                                }
-                                event::Action::ActionRun(
-                                    event::ActionRun::Stepper1SpeedRight { ref data },
-                                ) => {
-                                    match fn_stepper1_speed(
-                                        data,
-                                        ctx.clone(),
-                                        uln2003::Direction::Reverse,
-                                    ) {
-                                        Some(recv_new) => {
-                                            recv = recv_new;
-                                            continue 'loop_match;
-                                        }
-                                        None => continue 'loop_recv,
-                                    }
-                                }
+                                    _ => continue 'loop_recv,
+                                },
                                 _ => continue 'loop_recv,
                             }
                         }
