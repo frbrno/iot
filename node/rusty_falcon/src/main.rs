@@ -321,17 +321,17 @@ fn main() {
                                             let mut guard = stepper1.lock().unwrap();
                                             guard.step();
 
-                                            if guard.position_current == data.position_final {
+                                            let position_abs_diff_next = guard
+                                                .position_current
+                                                .abs_diff(data.position_final);
+
+                                            if position_abs_diff_next==0 {
                                                 done = true;
                                                 tx_done.try_send(true);
                                                 guard.stop();
                                                 drop(guard);
                                                 return;
-                                            }
-
-                                            let position_abs_diff_next = guard
-                                                .position_current
-                                                .abs_diff(data.position_final);
+                                            }                                            
 
                                             if position_abs_diff_next > position_abs_diff {
                                                 // something wrong, it should get smaller
@@ -372,16 +372,20 @@ fn main() {
                                         done_a = true;
                                     })
                                     .recv(&rx_worker, |e| {
-                                        let (action, ctx) = e.unwrap();
+                                        let (action, ctx_next) = e.unwrap();
                                         match action {
                                             event::Action::ActionGet((action_get)) => {
                                                 // while action_run is active, answer to simple action_get commands
-                                                fn_handle_get(action_get, ctx);
+                                                fn_handle_get(action_get, ctx_next);
                                             }
                                             _ => {
                                                 // got action_set/run, this terminates the active action_run command
-                                                result = Some((action, ctx));
+                                                result = Some((action, ctx_next));
                                                 done_b = true;
+                                                tx_eventer_from_worker.send(event::Event::ActionReply((
+                                                    event::ActionReply::Cancel(),
+                                                    ctx.clone(),
+                                                )));
                                             }
                                         }
                                     })
