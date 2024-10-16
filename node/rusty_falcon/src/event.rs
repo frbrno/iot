@@ -73,7 +73,7 @@ pub fn reply_done(data: Option<ReplyData>, ctx: Context) -> Event {
 pub fn reply_error(msg: String, ctx: Context) -> Event {
     Event::ActionReply((
         ActionReply::Error {
-            data: Some(ReplyData::WithString(msg)),
+            data: Some(ReplyData::WithString { message: msg }),
         },
         ctx,
     ))
@@ -120,7 +120,9 @@ impl ActionReply {
 #[derive(Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ReplyData {
-    WithString(String),
+    WithString {
+        message: String,
+    },
     Stepper1State {
         current_position: usize,
         direction: String,

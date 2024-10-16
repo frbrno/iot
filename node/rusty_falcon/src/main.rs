@@ -220,10 +220,15 @@ fn main() {
                             client.enqueue(topic.as_str(), QoS::AtMostOnce, false, data.as_bytes());
                         }
                         Err(err) => {
-                            let reply = ActionReply::Error {
-                                data: Some(event::ReplyData::WithString(err.to_string())),
+                            // serialization failed
+                            let reply = event::ActionReply::Error {
+                                data: Some(
+                                    (event::ReplyData::WithString {
+                                        message: err.to_string(),
+                                    }),
+                                ),
                             };
-                            let data = serde_json::to_string(&reply).unwrap();
+                            let data = serde_json::to_string(reply.data()).unwrap();
                             client.enqueue(
                                 reply.topic(&ctx).as_str(),
                                 QoS::AtMostOnce,
