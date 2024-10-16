@@ -42,7 +42,7 @@ const MQTT_TOPIC: &str = "+/rusty_falcon/+/+/+";
 
 pub struct Stepper<T: uln2003::StepperMotor> {
     ext: T,
-    current_position: usize,
+    position_current: usize,
     direction: uln2003::Direction,
 }
 
@@ -50,7 +50,7 @@ impl<T: uln2003::StepperMotor> Stepper<T> {
     pub fn new(ext: T) -> Self {
         Stepper {
             ext,
-            current_position: 0,
+            position_current: 0,
             direction: uln2003::Direction::Normal, //in my case 'right'
         }
     }
@@ -59,12 +59,12 @@ impl<T: uln2003::StepperMotor> Stepper<T> {
     fn step(&mut self) -> Result<(), uln2003::StepError> {
         match self.direction {
             uln2003::Direction::Reverse => {
-                if self.current_position > 0 {
-                    self.current_position -= 1;
+                if self.position_current > 0 {
+                    self.position_current -= 1;
                 }
             }
             uln2003::Direction::Normal => {
-                self.current_position += 1;
+                self.position_current += 1;
             }
         }
         self.ext.step() //TODO error?
@@ -266,9 +266,6 @@ fn main() {
                     info!("spawn worker");
                     let mut timeout = std::time::Duration::from_millis(5);
 
-                    let mut stepper1_home_position_set = false;
-                    let mut stepper1_current_position = 0u64;
-
                     let fn_handle_get =
                         |action_get: event::ActionGet, ctx: event::Context| match action_get {
                             event::ActionGet::Stepper1State() => {
@@ -279,7 +276,7 @@ fn main() {
                                     uln2003::Direction::Reverse => direction = "right",
                                 }
                                 let mut data = event::ReplyData::Stepper1State {
-                                    current_position: guard.current_position,
+                                    position_current: guard.position_current,
                                     direction: direction.to_string(),
                                 };
                                 drop(guard);
@@ -287,6 +284,114 @@ fn main() {
                                 tx_eventer_from_worker
                                     .send(event::reply_ack(Some(data), ctx.clone()));
                             }
+                        };
+
+                    let fn_stepper1_move_to =
+                        |data: &event::RequestStepper1MoveTo,
+                         ctx: &event::Context|
+                         -> Option<(event::Action, event::Context)> {
+                            tx_eventer_from_worker.send(event::reply_ack(None, ctx.clone()));
+                            let step_delay =
+                                std::time::Duration::from_micros(data.step_delay_micros as u64);
+
+                            let mut guard = stepper1.lock().unwrap();
+                            if data.position_final == guard.position_current {
+                                drop(guard);
+                                tx_eventer_from_worker.send(event::reply_done(None, ctx.clone()));
+                                return None;
+                            } else if data.position_final > guard.position_current {
+                                // move to left
+                                guard.set_direction(uln2003::Direction::Normal);
+                            } else {
+                                // move to right
+                                guard.set_direction(uln2003::Direction::Reverse);
+                            }
+                            let mut position_abs_diff =
+                                guard.position_current.abs_diff(data.position_final);
+                            drop(guard);
+
+                            let (tx_done, rx_done) = flume::bounded::<bool>(1);
+
+                            let timer = unsafe {
+                                let stepper1 = std::sync::Arc::clone(&stepper1);
+                                let mut done = false;
+                                timer_service
+                                    .timer_nonstatic(move || {
+                                        if !done {
+                                            let mut guard = stepper1.lock().unwrap();
+                                            guard.step();
+
+                                            if guard.position_current == data.position_final {
+                                                done = true;
+                                                tx_done.try_send(true);
+                                                guard.stop();
+                                                drop(guard);
+                                                return;
+                                            }
+
+                                            let position_abs_diff_next = guard
+                                                .position_current
+                                                .abs_diff(data.position_final);
+
+                                            if position_abs_diff_next > position_abs_diff {
+                                                // something wrong, it should get smaller
+                                                done = true;
+                                                tx_done.try_send(false);
+                                                guard.stop();
+                                                drop(guard);
+                                                return;
+                                            }
+
+                                            drop(guard);
+
+                                            position_abs_diff = position_abs_diff_next;
+                                        }
+                                    })
+                                    .unwrap()
+                            };
+
+                            timer.every(step_delay).unwrap();
+
+                            let mut done_a = false;
+                            let mut done_b = false;
+                            let mut result: Option<(event::Action, event::Context)> = None;
+
+                            while !done_a && !done_b {
+                                flume::Selector::new()
+                                    .recv(&rx_done, |success| {
+                                        let success = success.unwrap_or(false);
+                                        if success {
+                                            tx_eventer_from_worker
+                                                .send(event::reply_done(None, ctx.clone()));
+                                        } else {
+                                            tx_eventer_from_worker.send(event::reply_error(
+                                                String::from("failed; guess logical error; move left right position_current and final etc, gets confusing. This needs a fix!!"),
+                                                ctx.clone(),
+                                            ));
+                                        }
+                                        done_a = true;
+                                    })
+                                    .recv(&rx_worker, |e| {
+                                        let (action, ctx) = e.unwrap();
+                                        match action {
+                                            event::Action::ActionGet((action_get)) => {
+                                                // while action_run is active, answer to simple action_get commands
+                                                fn_handle_get(action_get, ctx);
+                                            }
+                                            _ => {
+                                                // got action_set/run, this terminates the active action_run command
+                                                result = Some((action, ctx));
+                                                done_b = true;
+                                            }
+                                        }
+                                    })
+                                    .wait();
+                            }
+
+                            timer.cancel();
+                            drop(timer);
+
+                            result
                         };
 
                     let fn_stepper1_speed =
@@ -359,6 +464,18 @@ fn main() {
                                 }
                                 event::Action::ActionRun((action_run)) => match action_run {
                                     event::ActionRun::Stop() => continue 'loop_recv,
+                                    event::ActionRun::Stepper1MoveTo { ref data } => {
+                                        match fn_stepper1_move_to(
+                                            data,
+                                            &ctx,
+                                        ) {
+                                            Some(recv_new) => {
+                                                recv = recv_new;
+                                                continue 'loop_match;
+                                            }
+                                            None => continue 'loop_recv,
+                                        }
+                                    }
                                     event::ActionRun::Stepper1SpeedLeft { ref data } => {
                                         match fn_stepper1_speed(
                                             data,
