@@ -269,13 +269,31 @@ fn main() {
                     let mut stepper1_home_position_set = false;
                     let mut stepper1_current_position = 0u64;
 
+                    let fn_handle_get =
+                        |action_get: event::ActionGet, ctx: event::Context| match action_get {
+                            event::ActionGet::Stepper1State() => {
+                                let guard = stepper1.lock().unwrap();
+                                let mut direction = "";
+                                match guard.direction {
+                                    uln2003::Direction::Normal => direction = "left",
+                                    uln2003::Direction::Reverse => direction = "right",
+                                }
+                                let mut data = event::ReplyData::Stepper1State {
+                                    current_position: guard.current_position,
+                                    direction: direction.to_string(),
+                                };
+                                drop(guard);
+
+                                tx_eventer_from_worker
+                                    .send(event::reply_ack(Some(data), ctx.clone()));
+                            }
+                        };
+
                     let fn_stepper1_speed =
                         |data: &event::DataReqRunStepper1Speed,
                          ctx: event::Context,
                          dir: uln2003::Direction|
                          -> Option<(event::Action, event::Context)> {
-                            // let mut result: Option<(event::Action, event::Context)> = None;
-
                             tx_eventer_from_worker.send(event::reply_ack(None, ctx.clone()));
 
                             let step_delay = std::time::Duration::from_micros(data.speed);
@@ -296,7 +314,23 @@ fn main() {
 
                             timer.every(step_delay).unwrap();
 
-                            let recv = rx_worker.recv().unwrap();
+                            let mut result: Option<(event::Action, event::Context)> = None;
+
+                            loop {
+                                let (action, ctx) = rx_worker.recv().unwrap();
+                                match action {
+                                    event::Action::ActionGet((action_get)) => {
+                                        // while action_run is active, answer to simple action_get commands
+                                        fn_handle_get(action_get, ctx);
+                                        continue;
+                                    }
+                                    _ => {
+                                        // got action_set/run, this terminates the active action_run command
+                                        result = Some((action, ctx));
+                                        break;
+                                    }
+                                }
+                            }
 
                             timer.cancel();
                             drop(timer);
@@ -310,7 +344,7 @@ fn main() {
                                 ctx.clone(),
                             )));
 
-                            Some(recv)
+                            result
                         };
 
                     'loop_recv: loop {
@@ -319,25 +353,10 @@ fn main() {
                             let action = recv.0;
                             let ctx = recv.1;
                             match action {
-                                event::Action::ActionGet((action_get)) => match action_get {
-                                    event::ActionGet::Stepper1State() => {
-                                        let guard = stepper1.lock().unwrap();
-                                        let mut direction = "";
-                                        match guard.direction {
-                                            uln2003::Direction::Normal => direction = "left",
-                                            uln2003::Direction::Reverse => direction = "right",
-                                        }
-                                        let mut data = event::ReplyData::Stepper1State {
-                                            current_position: guard.current_position,
-                                            direction: direction.to_string(),
-                                        };
-                                        drop(guard);
-
-                                        tx_eventer_from_worker
-                                            .send(event::reply_ack(Some(data), ctx.clone()));
-                                        continue 'loop_recv;
-                                    }
-                                },
+                                event::Action::ActionGet((action_get)) => {
+                                    fn_handle_get(action_get, ctx);
+                                    continue 'loop_recv;
+                                }
                                 event::Action::ActionRun((action_run)) => match action_run {
                                     event::ActionRun::Stop() => continue 'loop_recv,
                                     event::ActionRun::Stepper1SpeedLeft { ref data } => {
