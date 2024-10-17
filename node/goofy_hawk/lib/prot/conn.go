@@ -1,6 +1,7 @@
 package prot
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -8,6 +9,11 @@ import (
 
 	"github.com/nats-io/nats.go"
 )
+
+var ErrCanceled = errors.New("canceled")
+var ErrTimeout = errors.New("timeout")
+var ErrProtocol = errors.New("protocol")
+var ErrGeneric = errors.New("generic")
 
 func NewConn(node_self string, nc *nats.Conn) *Conn {
 	c := new(Conn)
@@ -63,14 +69,14 @@ func (c *Conn) Get(node string, action string, payload []byte) (*Msg, error) {
 	sig_msg := make(chan *nats.Msg, 1)
 	sub, err := c.nc.ChanSubscribe(fmt.Sprintf("%s.%s.%s.%s.%v", node, c.node_self, action, MsgTyp_Ack, token), sig_msg)
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(ErrProtocol, err)
 	}
 	defer sub.Unsubscribe()
 
 	// goofy_hawk.rusty_falcon.stepper1_state.get.2
 	err = c.nc.Publish(fmt.Sprintf("%s.%s.%s.%s.%v", c.node_self, node, action, MsgTyp_Get, token), payload)
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(ErrProtocol, err)
 	}
 
 	timeout := time.NewTimer(time.Second * 6)
@@ -78,7 +84,7 @@ func (c *Conn) Get(node string, action string, payload []byte) (*Msg, error) {
 
 	select {
 	case <-timeout.C:
-		return nil, fmt.Errorf("timeout waiting for reply")
+		return nil, ErrTimeout
 	case msg_nats := <-sig_msg:
 		msg := &Msg{
 			Msg:    msg_nats,
@@ -107,14 +113,14 @@ func (c *Conn) Run(node string, action string, payload []byte) (func(), <-chan *
 	sig_msg_nats := make(chan *nats.Msg, 10)
 	sub, err := c.nc.ChanSubscribe(fmt.Sprintf("%s.%s.%s.%s.%v", node, c.node_self, action, MsgTyp_All, token), sig_msg_nats)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, errors.Join(ErrProtocol, err)
 	}
 	//defer sub.Unsubscribe()
 
 	err = c.nc.Publish(fmt.Sprintf("%s.%s.%s.%s.%v", c.node_self, node, action, MsgTyp_Run, token), payload)
 	if err != nil {
 		sub.Unsubscribe()
-		return nil, nil, err
+		return nil, nil, errors.Join(ErrProtocol, err)
 	}
 
 	sig_cancel := make(chan struct{})
@@ -152,4 +158,8 @@ func (c *Conn) Run(node string, action string, payload []byte) (func(), <-chan *
 		// TODO: close sig_msg_nats?
 	}, sig_msg, nil
 
+}
+
+func (c *Conn) RunHandler() *runHandler {
+	return NewRunHandler(c)
 }

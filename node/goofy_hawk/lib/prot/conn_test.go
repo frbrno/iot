@@ -1,6 +1,7 @@
 package prot
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -69,4 +70,38 @@ func TestRun(t *testing.T) {
 			t.Log("protocol error")
 		}
 	}
+}
+
+func TestRunHandler(t *testing.T) {
+	nc, err := nats.Connect(nats_url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer nc.Close()
+
+	conn := NewConn(node_self, nc)
+
+	gen_data_stepper1_move_to := func(position_final uint) []byte {
+		return []byte(fmt.Sprintf(`{"position_final": %v,"step_delay_micros":1000}`, position_final))
+	}
+	sig_done := make(chan error, 1)
+
+	err = conn.RunHandler().
+		WithSigDone(sig_done).
+		Run(
+			node_rusty_falcon,
+			"stepper1_move_to",
+			gen_data_stepper1_move_to(35000),
+		)
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = <-sig_done
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Log("success")
 }
