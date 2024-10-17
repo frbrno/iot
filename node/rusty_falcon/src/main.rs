@@ -143,6 +143,9 @@ fn main() {
     let tx_eventer_from_worker = tx_event.clone();
     let tx_eventer_from_mqtt = tx_event.clone();
 
+    let p2p_token = std::sync::Arc::new(std::sync::Mutex::new(0i64));
+
+
     let _subscription = sys_loop.subscribe::<WifiEvent, _>(move |event| {
         info!("[Subscribe callback] Got event: {:?}", event);
         match event {
@@ -259,6 +262,8 @@ fn main() {
         });
         // worker
         //let stepper1_shared = std::sync::Arc::clone(&stepper1_shared);
+
+        let p2p_token=std::sync::Arc::clone(&p2p_token);
         s.spawn(|| {
             std::thread::Builder::new()
                 .stack_size(4 * 1024)
@@ -281,6 +286,15 @@ fn main() {
                                 };
                                 drop(guard);
 
+                                tx_eventer_from_worker
+                                    .send(event::reply_ack(Some(data), ctx.clone()));
+                            }
+                            event::ActionGet::P2PToken() => {
+                                let guard= p2p_token.lock().unwrap();
+                                let token = *guard;
+                                drop(guard);
+
+                                let data = event::ReplyData::P2PToken { p2p_token: token };
                                 tx_eventer_from_worker
                                     .send(event::reply_ack(Some(data), ctx.clone()));
                             }
@@ -467,6 +481,15 @@ fn main() {
                                     continue 'loop_recv;
                                 }
                                 event::Action::ActionRun((action_run)) => match action_run {
+                                    event::ActionRun::P2PInit { ref data } => {
+                                        tx_eventer_from_worker.send(event::reply_ack(None, ctx.clone()));
+                                        let mut guard= p2p_token.lock().unwrap();
+                                        *guard=data.p2p_token;
+                                        drop(guard);
+                                        
+                                        tx_eventer_from_worker.send(event::reply_done(None, ctx.clone()));
+                                        continue 'loop_recv;
+                                    }
                                     event::ActionRun::Stop() => continue 'loop_recv,
                                     event::ActionRun::Stepper1MoveTo { ref data } => {
                                         match fn_stepper1_move_to(

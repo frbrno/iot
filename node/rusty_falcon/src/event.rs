@@ -16,6 +16,13 @@ pub fn action_from_mqtt(topic: &str, data: &[u8]) -> Result<(Action, Context)> {
 
     match (ctx.action.as_str(), ctx.cmd.as_str()) {
         ("get", "stepper1_state") => Ok((Action::ActionGet(ActionGet::Stepper1State()), ctx)),
+        ("get", "p2p_token") => Ok((Action::ActionGet(ActionGet::P2PToken()), ctx)),
+        ("run", "p2p_init") => Ok((
+            Action::ActionRun(ActionRun::P2PInit {
+                data: serde_json::from_slice(data)?,
+            }),
+            ctx,
+        )),
         ("run", "stepper1_move_to") => Ok((
             Action::ActionRun(ActionRun::Stepper1MoveTo {
                 data: serde_json::from_slice(data)?,
@@ -98,10 +105,12 @@ pub enum ActionRun {
     Stepper1MoveTo { data: RequestStepper1MoveTo },
     Stop(),
     UpdateBoard { data: DataReqRunUpdateBoard },
+    P2PInit { data: RequestP2PInit },
 }
 
 pub enum ActionGet {
     Stepper1State(),
+    P2PToken(),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -134,6 +143,9 @@ pub enum ReplyData {
         position_current: usize,
         direction: String,
     },
+    P2PToken {
+        p2p_token: i64,
+    },
 }
 
 impl ActionReply {
@@ -164,6 +176,11 @@ pub struct DataReqRunStepper1Speed {
 pub struct RequestStepper1MoveTo {
     pub position_final: usize,
     pub step_delay_micros: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct RequestP2PInit {
+    pub p2p_token: i64,
 }
 
 #[derive(Serialize, Deserialize)]
