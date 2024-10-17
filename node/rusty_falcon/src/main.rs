@@ -208,7 +208,7 @@ fn main() {
                 info!("Subscribed to topic \"{MQTT_TOPIC}\"");
                 break;
             }
-            client.enqueue(
+            client.publish(
                 format!("rusty_falcon/hello/{:}", HELLO.to_string()).as_str(),
                 QoS::AtMostOnce,
                 false,
@@ -220,7 +220,7 @@ fn main() {
                 match reply.data() {
                     Some(data) => match serde_json::to_string(&data) {
                         Ok(data) => {
-                            client.enqueue(topic.as_str(), QoS::AtMostOnce, false, data.as_bytes());
+                            client.publish(topic.as_str(), QoS::AtMostOnce, false, data.as_bytes());
                         }
                         Err(err) => {
                             // serialization failed
@@ -232,7 +232,7 @@ fn main() {
                                 ),
                             };
                             let data = serde_json::to_string(reply.data()).unwrap();
-                            client.enqueue(
+                            client.publish(
                                 reply.topic(&ctx).as_str(),
                                 QoS::AtMostOnce,
                                 false,
@@ -241,7 +241,7 @@ fn main() {
                         }
                     },
                     None => {
-                        client.enqueue(topic.as_str(), QoS::AtMostOnce, false, &[0]);
+                        client.publish(topic.as_str(), QoS::AtMostOnce, false, &[0]);
                     }
                 }
             };
@@ -486,7 +486,7 @@ fn main() {
                                         let mut guard= p2p_token.lock().unwrap();
                                         *guard=data.p2p_token;
                                         drop(guard);
-                                        
+
                                         tx_eventer_from_worker.send(event::reply_done(None, ctx.clone()));
                                         continue 'loop_recv;
                                     }
