@@ -4,95 +4,48 @@ import (
 	"fmt"
 	"testing"
 	"time"
-
-	"github.com/nats-io/nats.go"
 )
 
 const nats_url = "192.168.10.124:4222"
-const node_self = "goofy_hawk_test"
-const node_rusty_falcon = "rusty_falcon"
+const name_self = "goofy_hawk_test"
+const name_rusty_falcon = "rusty_falcon"
 
-func TestGet(t *testing.T) {
-	nc, err := nats.Connect(nats_url)
+func TestPeer(t *testing.T) {
+	conn, err := Connect(nats_url, name_self)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer nc.Close()
+	defer conn.nc.Close()
 
-	conn := NewConn(node_self, nc)
-
-	t_begin := time.Now()
-	msg, err := conn.Get(node_rusty_falcon, "stepper1_state", nil)
+	peer1, err := NewPeer(conn, name_rusty_falcon)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	t.Logf("success, reply_millis: %v, reply: %v", time.Since(t_begin).Milliseconds(), msg)
+	_ = peer1
+	time.Sleep(time.Minute * 30)
 }
 
-func TestRun(t *testing.T) {
-	nc, err := nats.Connect(nats_url)
+func TestRequest(t *testing.T) {
+	conn, err := Connect(nats_url, name_self)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer nc.Close()
+	defer conn.nc.Close()
 
-	conn := NewConn(node_self, nc)
-
-	fn_cancel, sig_msg, err := conn.Run(node_rusty_falcon, "stepper1_move_to", []byte(`{"position_final": 20000,"step_delay_micros":1000}`))
+	peer1, err := NewPeer(conn, name_rusty_falcon)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer fn_cancel()
-
-	// TODO: should this be done in conn.Run?
-	select {
-	case <-time.After(time.Second * 6):
-		t.Fatal("timeout waiting for ack")
-	case msg := <-sig_msg:
-		if msg.Typ != MsgTyp_Ack {
-			t.Fatal("protocol error, expected ack")
-		}
-	}
-
-	select {
-	case <-time.After(time.Minute * 2):
-		t.Fatal("timeout waiting for done")
-	case msg := <-sig_msg:
-		switch msg.Typ {
-		case MsgTyp_Done:
-			t.Log("success")
-		case MsgTyp_Cancel:
-			t.Log("action got canceled, who did this?")
-		case MsgTyp_Error:
-			t.Log("ups, got error")
-		default:
-			t.Log("protocol error")
-		}
-	}
-}
-
-func TestRunHandler(t *testing.T) {
-	nc, err := nats.Connect(nats_url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer nc.Close()
-
-	conn := NewConn(node_self, nc)
 
 	gen_data_stepper1_move_to := func(position_final uint) []byte {
 		return []byte(fmt.Sprintf(`{"position_final": %v,"step_delay_micros":1000}`, position_final))
 	}
 	sig_done := make(chan error, 1)
 
-	err = conn.RunHandler().
-		WithSigDone(sig_done).
-		Run(
-			node_rusty_falcon,
-			"stepper1_move_to",
-			gen_data_stepper1_move_to(35000),
-		)
+	err = peer1.Request().
+		SetSigDone(sig_done).
+		SetPayload(gen_data_stepper1_move_to(20000)).
+		Run("stepper1_move_to")
 
 	if err != nil {
 		t.Fatal(err)
@@ -104,4 +57,48 @@ func TestRunHandler(t *testing.T) {
 	}
 
 	t.Log("success")
+}
+
+// go test -v -run=TestRunHandlerInfinite -timeout 10h lib/prot/*.go
+func TestRequestInfinite(t *testing.T) {
+	conn, err := Connect(nats_url, name_self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.nc.Close()
+
+	peer1, err := NewPeer(conn, name_rusty_falcon)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	gen_data_stepper1_move_to := func(position_final uint) []byte {
+		return []byte(fmt.Sprintf(`{"position_final": %v,"step_delay_micros":1000}`, position_final))
+	}
+	position_final := uint(10000)
+	for {
+		sig_done := make(chan error, 1)
+
+		err = peer1.Request().
+			SetSigDone(sig_done).
+			SetPayload(gen_data_stepper1_move_to(position_final)).
+			Run("stepper1_move_to")
+
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = <-sig_done
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		t.Log("success")
+
+		if position_final >= 20000 {
+			position_final = 10000
+		} else {
+			position_final = 20000
+		}
+	}
 }
