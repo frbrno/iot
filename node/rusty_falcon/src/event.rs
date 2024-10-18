@@ -7,7 +7,8 @@ use serde::{
 	Serialize,
 };
 
-pub fn action_from_mqtt(topic: &str, data: &[u8]) -> Result<(Action, Context)> {
+// just cmds right now
+pub fn from_mqtt(topic: &str, data: &[u8]) -> Result<(Cmd, Context)> {
 	let parts: Vec<&str> = topic.split('/').collect();
 	if parts.len() != 5 {
 		return Err(anyhow!("unknown topic {:?}", topic));
@@ -15,55 +16,60 @@ pub fn action_from_mqtt(topic: &str, data: &[u8]) -> Result<(Action, Context)> {
 	let ctx = Context {
 		src: parts[0].to_string(),
 		dst: parts[1].to_string(),
-		cmd: parts[2].to_string(),
-		action: parts[3].to_string(),
+		event: parts[2].to_string(),
+		event_typ: parts[3].to_string(),
 		token: parts[4].to_string(),
 	};
 
-	match (ctx.action.as_str(), ctx.cmd.as_str()) {
-		("get", "stepper1_state") => Ok((Action::ActionGet(ActionGet::Stepper1State()), ctx)),
-		("get", "p2p_token") => Ok((Action::ActionGet(ActionGet::P2PToken()), ctx)),
+	// println!(
+	// 	"src: {:?}, dst: {:?}, event: {:?}, event_typ: {:?}, token: {:?},",
+	// 	ctx.src, ctx.dst, ctx.event, ctx.event_typ, ctx.token
+	// );
+
+	match (ctx.event_typ.as_str(), ctx.event.as_str()) {
+		("get", "stepper1_state") => Ok((Cmd::CmdGet(CmdGet::Stepper1State()), ctx)),
+		("get", "p2p_token") => Ok((Cmd::CmdGet(CmdGet::P2PToken()), ctx)),
 		("run", "p2p_init") => Ok((
-			Action::ActionRun(ActionRun::P2PInit {
+			Cmd::CmdRun(CmdRun::P2PInit {
 				data: serde_json::from_slice(data)?,
 			}),
 			ctx,
 		)),
 		("run", "stepper1_move_to") => Ok((
-			Action::ActionRun(ActionRun::Stepper1MoveTo {
+			Cmd::CmdRun(CmdRun::Stepper1MoveTo {
 				data: serde_json::from_slice(data)?,
 			}),
 			ctx,
 		)),
 		("run", "stepper1_speed") => Ok((
-			Action::ActionRun(ActionRun::Stepper1Speed {
+			Cmd::CmdRun(CmdRun::Stepper1Speed {
 				data: serde_json::from_slice(data)?,
 			}),
 			ctx,
 		)),
 		("run", "stepper1_speed_left") => Ok((
-			Action::ActionRun(ActionRun::Stepper1SpeedLeft {
+			Cmd::CmdRun(CmdRun::Stepper1SpeedLeft {
 				data: serde_json::from_slice(data)?,
 			}),
 			ctx,
 		)),
 		("run", "stepper1_speed_right") => Ok((
-			Action::ActionRun(ActionRun::Stepper1SpeedRight {
+			Cmd::CmdRun(CmdRun::Stepper1SpeedRight {
 				data: serde_json::from_slice(data)?,
 			}),
 			ctx,
 		)),
-		("run", "stop") => Ok((Action::ActionRun(ActionRun::Stop()), ctx)),
+		("run", "stop") => Ok((Cmd::CmdRun(CmdRun::Stop()), ctx)),
 		("run", "update_board") => Ok((
-			Action::ActionRun(ActionRun::UpdateBoard {
+			Cmd::CmdRun(CmdRun::UpdateBoard {
 				data: serde_json::from_slice(data)?,
 			}),
 			ctx,
 		)),
 		_ => Err(anyhow!(
-			"unknown request. action: {:?}, cmd: {:?}",
-			ctx.action,
-			ctx.cmd
+			"unknown command. event: {:?}, event_typ: {:?}",
+			ctx.event,
+			ctx.event_typ
 		)),
 	}
 }
@@ -72,42 +78,42 @@ pub fn action_from_mqtt(topic: &str, data: &[u8]) -> Result<(Action, Context)> {
 pub struct Context {
 	pub src: String,
 	pub dst: String,
-	pub cmd: String,
+	pub event: String,
+	pub event_typ: String,
 	pub token: String,
-	pub action: String,
 }
 pub enum Event {
-	ActionReply((ActionReply, Context)),
-	Action((Action, Context)),
+	CmdReply((CmdReply, Context)),
+	Cmd((Cmd, Context)),
 }
 
 pub fn reply_ack(data: Option<ReplyData>, ctx: &Context) -> Event {
-	Event::ActionReply((ActionReply::Ack { data }, ctx.clone()))
+	Event::CmdReply((CmdReply::Ack { data }, ctx.clone()))
 }
 
 pub fn reply_done(data: Option<ReplyData>, ctx: &Context) -> Event {
-	Event::ActionReply((ActionReply::Done { data }, ctx.clone()))
+	Event::CmdReply((CmdReply::Done { data }, ctx.clone()))
 }
 
 pub fn reply_cancel(data: Option<ReplyData>, ctx: &Context) -> Event {
-	Event::ActionReply((ActionReply::Cancel(), ctx.clone()))
+	Event::CmdReply((CmdReply::Cancel(), ctx.clone()))
 }
 
 pub fn reply_error(msg: String, ctx: &Context) -> Event {
-	Event::ActionReply((
-		ActionReply::Error {
+	Event::CmdReply((
+		CmdReply::Error {
 			data: Some(ReplyData::WithString { message: msg }),
 		},
 		ctx.clone(),
 	))
 }
 
-pub enum Action {
-	ActionRun(ActionRun),
-	ActionGet(ActionGet),
+pub enum Cmd {
+	CmdRun(CmdRun),
+	CmdGet(CmdGet),
 }
 
-pub enum ActionRun {
+pub enum CmdRun {
 	Stepper1Speed { data: DataReqRunStepper1Speed },
 	Stepper1SpeedLeft { data: DataReqRunStepper1Speed },
 	Stepper1SpeedRight { data: DataReqRunStepper1Speed },
@@ -118,27 +124,43 @@ pub enum ActionRun {
 	P2PInit { data: RequestP2PInit },
 }
 
-pub enum ActionGet {
+pub enum CmdGet {
 	Stepper1State(),
 	P2PToken(),
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum ActionReply {
+pub enum CmdReply {
 	Ack { data: Option<ReplyData> },
 	Done { data: Option<ReplyData> },
-	Cancel(),
 	Error { data: Option<ReplyData> },
+	Cancel(),
 }
 
-impl ActionReply {
+impl CmdReply {
 	pub fn data(&self) -> &Option<ReplyData> {
 		match self {
-			ActionReply::Ack { data } => data,
-			ActionReply::Done { data } => data,
-			ActionReply::Error { data } => data,
-			ActionReply::Cancel() => &None,
+			CmdReply::Ack { data } => data,
+			CmdReply::Done { data } => data,
+			CmdReply::Error { data } => data,
+			CmdReply::Cancel() => &None,
+		}
+	}
+	pub fn topic(&self, ctx: &Context) -> String {
+		match self {
+			CmdReply::Ack { .. } => {
+				format!("{}/{}/{}/ack/{}", ctx.dst, ctx.src, ctx.event, ctx.token)
+			}
+			CmdReply::Done { .. } => {
+				format!("{}/{}/{}/done/{}", ctx.dst, ctx.src, ctx.event, ctx.token)
+			}
+			CmdReply::Cancel() => {
+				format!("{}/{}/{}/cancel/{}", ctx.dst, ctx.src, ctx.event, ctx.token)
+			}
+			CmdReply::Error { .. } => {
+				format!("{}/{}/{}/error/{}", ctx.dst, ctx.src, ctx.event, ctx.token)
+			}
 		}
 	}
 }
@@ -156,25 +178,6 @@ pub enum ReplyData {
 	P2PToken {
 		p2p_token: i64,
 	},
-}
-
-impl ActionReply {
-	pub fn topic(&self, ctx: &Context) -> String {
-		match self {
-			ActionReply::Ack { .. } => {
-				format!("{}/{}/{}/ack/{}", ctx.dst, ctx.src, ctx.cmd, ctx.token)
-			}
-			ActionReply::Done { .. } => {
-				format!("{}/{}/{}/done/{}", ctx.dst, ctx.src, ctx.cmd, ctx.token)
-			}
-			ActionReply::Cancel() => {
-				format!("{}/{}/{}/cancel/{}", ctx.dst, ctx.src, ctx.cmd, ctx.token)
-			}
-			ActionReply::Error { .. } => {
-				format!("{}/{}/{}/error/{}", ctx.dst, ctx.src, ctx.cmd, ctx.token)
-			}
-		}
-	}
 }
 
 #[derive(Serialize, Deserialize)]
