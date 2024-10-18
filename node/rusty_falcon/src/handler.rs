@@ -19,7 +19,7 @@ pub struct Handler {
 	pub p2p_token: Arc<Mutex<i64>>,
 	pub stepper1: Arc<Mutex<stepper::Stepper>>,
 	tx_event: flume::Sender<(event::Event)>,
-	rx_event: flume::Receiver<(event::Action, event::Context)>,
+	rx_event: flume::Receiver<(event::Cmd, event::Context)>,
 	timer_service: EspTimerService<Task>,
 }
 
@@ -28,7 +28,7 @@ impl Handler {
 		p2p_token: Arc<Mutex<i64>>,
 		stepper1: Arc<Mutex<stepper::Stepper>>,
 		tx_event: flume::Sender<(event::Event)>,
-		rx_event: flume::Receiver<(event::Action, event::Context)>,
+		rx_event: flume::Receiver<(event::Cmd, event::Context)>,
 		timer_service: EspTimerService<Task>,
 	) -> Self {
 		Handler {
@@ -189,7 +189,7 @@ impl Handler {
 
 		timer.every(step_delay).unwrap();
 
-		let mut result: Option<(event::Action, event::Context)> = None;
+		let mut result: Option<(event::Cmd, event::Context)> = None;
 
 		rx_cancel.recv();
 
@@ -200,8 +200,8 @@ impl Handler {
 		stepper_guard.stop();
 		drop(stepper_guard);
 
-		self.tx_event.send(event::Event::ActionReply((
-			event::ActionReply::Cancel(),
+		self.tx_event.send(event::Event::CmdReply((
+			event::CmdReply::Cancel(),
 			ctx.clone(),
 		)));
 	}

@@ -44,7 +44,7 @@ use esp_idf_svc::{
 	timer::EspTaskTimerService,
 	wifi::*,
 };
-use event::ActionReply;
+use event::CmdReply;
 use log::*;
 use serde_json::json;
 use uln2003::{
@@ -121,7 +121,11 @@ impl<T: uln2003::StepperMotor> Stepper<T> {
 fn main() {
 	esp_idf_svc::sys::link_patches();
 	esp_idf_svc::log::EspLogger::initialize_default();
-	unsafe { esp_wifi_set_max_tx_power(66) };
+	unsafe { esp_wifi_set_max_tx_power(34) };
+
+	std::panic::set_hook(Box::new(|panic_info| {
+		println!("Custom panic hook: {:?}", panic_info);
+	}));
 
 	info!("{:?}", HELLO);
 	info!("ssid: {:?}, pw: {:?}", SSID, PASSWORD);
@@ -212,9 +216,10 @@ fn main() {
 						match event.payload() {
 							EventPayload::Received { topic, data, .. } => {
 								if let Some(topic) = topic {
-									match event::action_from_mqtt(topic, data) {
+									// TODO: only a command if its a get/set/run event_typ
+									match event::from_mqtt(topic, data) {
 										Ok((e, ctx)) => {
-											let _ = tx_eventer_from_mqtt.send(event::Event::Action((e, ctx)));
+											let _ = tx_eventer_from_mqtt.send(event::Event::Cmd((e, ctx)));
 										}
 										Err(err) => {
 											info!("mqtt msg handler err: {:?}", err);
@@ -253,7 +258,7 @@ fn main() {
 				false,
 				&[0],
 			);
-			let mut fn_action_reply = |reply: event::ActionReply, ctx: event::Context| {
+			let mut fn_cmd_reply = |reply: event::CmdReply, ctx: event::Context| {
 				let topic = reply.topic(&ctx).to_string();
 				match reply.data() {
 					Some(data) => match serde_json::to_string(&data) {
@@ -262,7 +267,7 @@ fn main() {
 						}
 						Err(err) => {
 							// serialization failed
-							let reply = event::ActionReply::Error {
+							let reply = event::CmdReply::Error {
 								data: Some(
 									(event::ReplyData::WithString {
 										message: err.to_string(),
@@ -287,14 +292,18 @@ fn main() {
 			loop {
 				let mut event = rx_event.recv().unwrap();
 				match event {
-					event::Event::Action((action, ctx)) => {
-						let _ = tx_worker_from_eventer.send((action, ctx));
+					event::Event::Cmd((cmd, ctx)) => {
+						let _ = tx_worker_from_eventer.send((cmd, ctx));
 					}
-					event::Event::ActionReply((reply, ctx)) => {
-						fn_action_reply(reply, ctx);
+					event::Event::CmdReply((reply, ctx)) => {
+						fn_cmd_reply(reply, ctx);
 					}
 
-					_ => std::panic!("not handled yet"),
+					_ => {
+						println!("about to panic rx_event");
+						std::thread::sleep(std::time::Duration::from_secs(2));
+						std::panic!("not handled yet")
+					}
 				}
 			}
 		});
@@ -307,8 +316,8 @@ fn main() {
 					info!("spawn worker");
 					let mut timeout = std::time::Duration::from_millis(5);
 
-					let fn_handle_get = |action_get: &event::ActionGet, ctx: &event::Context| match action_get {
-						event::ActionGet::Stepper1State() => {
+					let fn_handle_get = |cmd_get: &event::CmdGet, ctx: &event::Context| match cmd_get {
+						event::CmdGet::Stepper1State() => {
 							let guard = stepper1.lock().unwrap();
 							let mut direction = "";
 							match guard.direction {
@@ -323,7 +332,7 @@ fn main() {
 
 							tx_eventer_from_worker.send(event::reply_ack(Some(data), ctx));
 						}
-						event::ActionGet::P2PToken() => {
+						event::CmdGet::P2PToken() => {
 							let guard = p2p_token.lock().unwrap();
 							let token = *guard;
 							drop(guard);
@@ -334,24 +343,24 @@ fn main() {
 					};
 
 					let mut fn_handle_run =
-						|action_run: &event::ActionRun, ctx: &event::Context, rx_cancel: flume::Receiver<bool>| {
-							match action_run {
-								event::ActionRun::P2PInit { ref data } => {
+						|cmd_run: &event::CmdRun, ctx: &event::Context, rx_cancel: flume::Receiver<bool>| {
+							match cmd_run {
+								event::CmdRun::P2PInit { ref data } => {
 									handler.run_p2p_init(data, ctx, rx_cancel);
 								}
-								event::ActionRun::UpdateBoard { ref data } => {
+								event::CmdRun::UpdateBoard { ref data } => {
 									handler.run_update_board(data, ctx, rx_cancel);
 								}
-								event::ActionRun::Stepper1MoveTo { ref data } => {
+								event::CmdRun::Stepper1MoveTo { ref data } => {
 									handler.run_stepper1_move_to(data, ctx, rx_cancel);
 								}
-								event::ActionRun::Stepper1SpeedLeft { ref data } => {
+								event::CmdRun::Stepper1SpeedLeft { ref data } => {
 									handler.run_stepper1_speed(data, ctx, uln2003::Direction::Normal, rx_cancel);
 								}
-								event::ActionRun::Stepper1SpeedRight { ref data } => {
+								event::CmdRun::Stepper1SpeedRight { ref data } => {
 									handler.run_stepper1_speed(data, ctx, uln2003::Direction::Reverse, rx_cancel);
 								}
-								event::ActionRun::Stop() => {
+								event::CmdRun::Stop() => {
 									rx_cancel.recv(); // just hang here until next run commands comes
 								}
 								_ => tx_eventer_from_worker
@@ -364,36 +373,36 @@ fn main() {
 						};
 
 					'loop_recv: loop {
-						let (mut action, mut ctx) = rx_worker.recv().unwrap();
+						let (mut cmd, mut ctx) = rx_worker.recv().unwrap();
 						'loop_match: loop {
-							match action {
-								event::Action::ActionGet((ref action_get)) => {
-									fn_handle_get(action_get, &ctx);
-									continue;
+							match cmd {
+								event::Cmd::CmdGet((ref cmd_get)) => {
+									fn_handle_get(cmd_get, &ctx);
+									continue 'loop_recv;
 								}
-								event::Action::ActionRun((ref action_run)) => {
+								event::Cmd::CmdRun((ref cmd_run)) => {
 									let (tx_cancel, rx_cancel) = flume::bounded(1);
-									let mut recv_next: Option<(event::Action, event::Context)> = None;
+									let mut recv_next: Option<(event::Cmd, event::Context)> = None;
 									std::thread::scope(|s| {
 										s.spawn(|| {
 											std::thread::Builder::new()
 												.stack_size(4 * 1024)
 												.spawn_scoped(s, || {
-													fn_handle_run(action_run, &ctx, rx_cancel);
+													fn_handle_run(cmd_run, &ctx, rx_cancel);
 												})
 										});
 										s.spawn(|| {
 											loop {
-												let (action_next, ctx_next) = rx_worker.recv().unwrap();
-												match action_next {
-													event::Action::ActionGet((ref action_get)) => {
-														// while action_run is active, answer to simple action_get commands
-														fn_handle_get(action_get, &ctx_next);
+												let (cmd_next, ctx_next) = rx_worker.recv().unwrap();
+												match cmd_next {
+													event::Cmd::CmdGet((ref cmd_get)) => {
+														// while cmd_run is active, answer to simple cmd_get commands
+														fn_handle_get(cmd_get, &ctx_next);
 														continue;
 													}
 													_ => {
-														// got action_set/run, this terminates the active action_run command
-														recv_next = Some((action_next, ctx_next));
+														// got cmd_set/run, this terminates the active cmd_run command
+														recv_next = Some((cmd_next, ctx_next));
 														//tx_cancel.try_send(true);
 														drop(tx_cancel); //this is like close(channel) in go, multiple threads get the signal
 														break;
@@ -402,8 +411,8 @@ fn main() {
 											}
 										});
 									});
-									if let Some((action_next, ctx_next)) = recv_next {
-										action = action_next;
+									if let Some((cmd_next, ctx_next)) = recv_next {
+										cmd = cmd_next;
 										ctx = ctx_next;
 										continue 'loop_match;
 									}
