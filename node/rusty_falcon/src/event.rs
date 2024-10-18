@@ -81,20 +81,24 @@ pub enum Event {
 	Action((Action, Context)),
 }
 
-pub fn reply_ack(data: Option<ReplyData>, ctx: Context) -> Event {
-	Event::ActionReply((ActionReply::Ack { data }, ctx))
+pub fn reply_ack(data: Option<ReplyData>, ctx: &Context) -> Event {
+	Event::ActionReply((ActionReply::Ack { data }, ctx.clone()))
 }
 
-pub fn reply_done(data: Option<ReplyData>, ctx: Context) -> Event {
-	Event::ActionReply((ActionReply::Done { data }, ctx))
+pub fn reply_done(data: Option<ReplyData>, ctx: &Context) -> Event {
+	Event::ActionReply((ActionReply::Done { data }, ctx.clone()))
 }
 
-pub fn reply_error(msg: String, ctx: Context) -> Event {
+pub fn reply_cancel(data: Option<ReplyData>, ctx: &Context) -> Event {
+	Event::ActionReply((ActionReply::Cancel(), ctx.clone()))
+}
+
+pub fn reply_error(msg: String, ctx: &Context) -> Event {
 	Event::ActionReply((
 		ActionReply::Error {
 			data: Some(ReplyData::WithString { message: msg }),
 		},
-		ctx,
+		ctx.clone(),
 	))
 }
 
