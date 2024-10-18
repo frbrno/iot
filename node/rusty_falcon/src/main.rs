@@ -53,6 +53,9 @@ use uln2003::{
 };
 
 mod event;
+mod handler;
+mod otaupdate;
+mod stepper;
 
 const FIRMWARE_DOWNLOAD_CHUNK_SIZE: usize = 1024 * 20;
 const FIRMWARE_MAX_SIZE: usize = 1024 * 1024 * 2;
@@ -61,7 +64,7 @@ const FIRMWARE_MIN_SIZE: usize = size_of::<FirmwareInfo>() + 1024;
 const SSID: &str = env!("WIFI_SSID");
 const PASSWORD: &str = env!("WIFI_PASS");
 
-const HELLO: &str = "HiThere150";
+const HELLO: &str = "HiThere69";
 
 const MQTT_URL: &str = "mqtt://192.168.10.124:1880";
 const MQTT_CLIENT_ID: &str = "rusty_falcon";
@@ -71,8 +74,8 @@ const MQTT_TOPIC: &str = "+/rusty_falcon/+/+/+";
 
 pub struct Stepper<T: uln2003::StepperMotor> {
 	ext: T,
-	position_current: usize,
-	direction: uln2003::Direction,
+	pub position_current: usize,
+	pub direction: uln2003::Direction,
 }
 
 impl<T: uln2003::StepperMotor> Stepper<T> {
@@ -85,7 +88,7 @@ impl<T: uln2003::StepperMotor> Stepper<T> {
 	}
 
 	// ~190000 steps for my 2m linear rail
-	fn step(&mut self) -> Result<(), uln2003::StepError> {
+	pub fn step(&mut self) -> Result<(), uln2003::StepError> {
 		match self.direction {
 			uln2003::Direction::Reverse => {
 				if self.position_current > 0 {
@@ -99,11 +102,11 @@ impl<T: uln2003::StepperMotor> Stepper<T> {
 		self.ext.step() //TODO error?
 	}
 	/// Do multiple steps with a given delay in ms
-	fn step_for(&mut self, steps: i32, delay: u32) -> Result<(), uln2003::StepError> {
+	pub fn step_for(&mut self, steps: i32, delay: u32) -> Result<(), uln2003::StepError> {
 		self.ext.step_for(steps, delay)
 	}
 	/// Set the stepping direction
-	fn set_direction(&mut self, dir: uln2003::Direction) {
+	pub fn set_direction(&mut self, dir: uln2003::Direction) {
 		match dir {
 			uln2003::Direction::Normal => self.direction = uln2003::Direction::Normal,
 			uln2003::Direction::Reverse => self.direction = uln2003::Direction::Reverse,
@@ -111,11 +114,10 @@ impl<T: uln2003::StepperMotor> Stepper<T> {
 		self.ext.set_direction(dir)
 	}
 	/// Stoping sets all pins low
-	fn stop(&mut self) -> Result<(), uln2003::StepError> {
+	pub fn stop(&mut self) -> Result<(), uln2003::StepError> {
 		self.ext.stop()
 	}
 }
-
 fn main() {
 	esp_idf_svc::sys::link_patches();
 	esp_idf_svc::log::EspLogger::initialize_default();
@@ -155,12 +157,14 @@ fn main() {
 
 	let (mut client, mut conn) = mqtt_create(MQTT_URL, MQTT_CLIENT_ID).unwrap();
 
-	let stepper1 = std::sync::Arc::new(std::sync::Mutex::new(Stepper::new(ULN2003::new(
-		PinDriver::output(peripherals.pins.gpio9).unwrap(),
-		PinDriver::output(peripherals.pins.gpio8).unwrap(),
-		PinDriver::output(peripherals.pins.gpio7).unwrap(),
-		PinDriver::output(peripherals.pins.gpio6).unwrap(),
-		Some(delay::Delay::new_default()),
+	let stepper1 = std::sync::Arc::new(std::sync::Mutex::new(stepper::Stepper::new(Box::new(
+		ULN2003::new(
+			PinDriver::output(peripherals.pins.gpio9).unwrap(),
+			PinDriver::output(peripherals.pins.gpio8).unwrap(),
+			PinDriver::output(peripherals.pins.gpio7).unwrap(),
+			PinDriver::output(peripherals.pins.gpio6).unwrap(),
+			Some(delay::Delay::new_default()),
+		),
 	))));
 
 	let timer_service = EspTaskTimerService::new().unwrap();
@@ -173,6 +177,15 @@ fn main() {
 	let tx_eventer_from_mqtt = tx_event.clone();
 
 	let p2p_token = std::sync::Arc::new(std::sync::Mutex::new(0i64));
+
+	let mut handler = handler::Handler::new(
+		p2p_token.clone(),
+		stepper1.clone(),
+		tx_eventer_from_worker.clone(),
+		rx_worker.clone(),
+		timer_service.clone(),
+	);
+	handler::say_hello();
 
 	let _subscription = sys_loop.subscribe::<WifiEvent, _>(move |event| {
 		info!("[Subscribe callback] Got event: {:?}", event);
@@ -288,292 +301,120 @@ fn main() {
 		// worker
 		let p2p_token = std::sync::Arc::clone(&p2p_token);
 		s.spawn(|| {
-            std::thread::Builder::new()
-                .stack_size(4 * 1024)
-                .spawn_scoped(s, move || {
-                    info!("spawn worker");
-                    let mut timeout = std::time::Duration::from_millis(5);
+			std::thread::Builder::new()
+				.stack_size(4 * 1024)
+				.spawn_scoped(s, move || {
+					info!("spawn worker");
+					let mut timeout = std::time::Duration::from_millis(5);
 
-                    let fn_handle_get = |action_get: event::ActionGet, ctx: event::Context| match action_get {
-                        event::ActionGet::Stepper1State() => {
-                            let guard = stepper1.lock().unwrap();
-                            let mut direction = "";
-                            match guard.direction {
-                                uln2003::Direction::Normal => direction = "left",
-                                uln2003::Direction::Reverse => direction = "right",
-                            }
-                            let mut data = event::ReplyData::Stepper1State {
-                                position_current: guard.position_current,
-                                direction: direction.to_string(),
-                            };
-                            drop(guard);
+					let fn_handle_get = |action_get: &event::ActionGet, ctx: &event::Context| match action_get {
+						event::ActionGet::Stepper1State() => {
+							let guard = stepper1.lock().unwrap();
+							let mut direction = "";
+							match guard.direction {
+								uln2003::Direction::Normal => direction = "left",
+								uln2003::Direction::Reverse => direction = "right",
+							}
+							let mut data = event::ReplyData::Stepper1State {
+								position_current: guard.position_current,
+								direction: direction.to_string(),
+							};
+							drop(guard);
 
-                            tx_eventer_from_worker.send(event::reply_ack(Some(data), ctx.clone()));
-                        }
-                        event::ActionGet::P2PToken() => {
-                            let guard = p2p_token.lock().unwrap();
-                            let token = *guard;
-                            drop(guard);
+							tx_eventer_from_worker.send(event::reply_ack(Some(data), ctx));
+						}
+						event::ActionGet::P2PToken() => {
+							let guard = p2p_token.lock().unwrap();
+							let token = *guard;
+							drop(guard);
 
-                            let data = event::ReplyData::P2PToken { p2p_token: token };
-                            tx_eventer_from_worker.send(event::reply_ack(Some(data), ctx.clone()));
-                        }
-                    };
-                    let handler_update_board = |data: event::DataReqRunUpdateBoard, ctx: event::Context| {
-                        std::thread::scope(|s| {
-                            s.spawn(|| {
-                                    std::thread::Builder::new()
-                                    .stack_size(4 * 1024)
-                                    .spawn_scoped(s, || {
-                                        tx_eventer_from_worker.send(event::reply_ack(None, ctx.clone()));
-                                        match simple_download_and_update_firmware(data.url) {
-                                            Ok(_) => {
-                                                tx_eventer_from_worker.send(event::reply_done(None, ctx.clone()));
-                                            }
-                                            Err(err) => {
-                                                info!("worker update_board err: {:?}", err);
-                                                tx_eventer_from_worker.send(event::reply_error(err.to_string(), ctx));
-                                            }
-                                        }
-                                        //wait done message is out
-                                        std::thread::sleep(std::time::Duration::from_secs(2));
-                                        unsafe {
-                                            esp_idf_svc::sys::esp_restart();
-                                        }
-                                    })
-                            });
-                            s.spawn(|| {
-                                loop {
-                                    let (action, ctx) = rx_worker.recv().unwrap();
-                                    match action {
-                                        event::Action::ActionGet((action_get)) => {
-                                            fn_handle_get(action_get, ctx);
-                                            continue;
-                                        }
-                                        _ => {
-                                            tx_eventer_from_worker.send(event::reply_error(
-                                                String::from("update active, board reboots soon"),
-                                                ctx,
-                                            ));
-                                        }
-                                    }
-                                }
-                            });
-                        });
-                    };
+							let data = event::ReplyData::P2PToken { p2p_token: token };
+							tx_eventer_from_worker.send(event::reply_ack(Some(data), ctx));
+						}
+					};
 
-                    let fn_stepper1_move_to = |data: &event::RequestStepper1MoveTo, ctx: &event::Context| -> Option<(event::Action, event::Context)> {
-                        tx_eventer_from_worker.send(event::reply_ack(None, ctx.clone()));
-                        let step_delay = std::time::Duration::from_micros(data.step_delay_micros as u64);
+					let mut fn_handle_run =
+						|action_run: &event::ActionRun, ctx: &event::Context, rx_cancel: flume::Receiver<bool>| {
+							match action_run {
+								event::ActionRun::P2PInit { ref data } => {
+									handler.run_p2p_init(data, ctx, rx_cancel);
+								}
+								event::ActionRun::UpdateBoard { ref data } => {
+									handler.run_update_board(data, ctx, rx_cancel);
+								}
+								event::ActionRun::Stepper1MoveTo { ref data } => {
+									handler.run_stepper1_move_to(data, ctx, rx_cancel);
+								}
+								event::ActionRun::Stepper1SpeedLeft { ref data } => {
+									handler.run_stepper1_speed(data, ctx, uln2003::Direction::Normal, rx_cancel);
+								}
+								event::ActionRun::Stepper1SpeedRight { ref data } => {
+									handler.run_stepper1_speed(data, ctx, uln2003::Direction::Reverse, rx_cancel);
+								}
+								event::ActionRun::Stop() => {
+									rx_cancel.recv(); // just hang here until next run commands comes
+								}
+								_ => tx_eventer_from_worker
+									.send(event::reply_error(
+										String::from("fn_handle_run err: no handler impl"),
+										ctx,
+									))
+									.unwrap(),
+							}
+						};
 
-                        let mut guard = stepper1.lock().unwrap();
-                        if data.position_final == guard.position_current {
-                            drop(guard);
-                            tx_eventer_from_worker.send(event::reply_done(None, ctx.clone()));
-                            return None;
-                        } else if data.position_final > guard.position_current {
-                            // move to left
-                            guard.set_direction(uln2003::Direction::Normal);
-                        } else {
-                            // move to right
-                            guard.set_direction(uln2003::Direction::Reverse);
-                        }
-                        let mut position_abs_diff = guard.position_current.abs_diff(data.position_final);
-                        drop(guard);
-
-                        let (tx_done, rx_done) = flume::bounded::<bool>(1);
-
-                        let timer = unsafe {
-                            let stepper1 = std::sync::Arc::clone(&stepper1);
-                            let mut done = false;
-                            timer_service
-                                .timer_nonstatic(move || {
-                                    if !done {
-                                        let mut guard = stepper1.lock().unwrap();
-                                        guard.step();
-
-                                        let position_abs_diff_next = guard.position_current.abs_diff(data.position_final);
-
-                                        if position_abs_diff_next == 0 {
-                                            done = true;
-                                            tx_done.try_send(true);
-                                            guard.stop();
-                                            drop(guard);
-                                            return;
-                                        }
-                                        if position_abs_diff_next > position_abs_diff {
-                                            // something wrong, it should get smaller
-                                            done = true;
-                                            tx_done.try_send(false);
-                                            guard.stop();
-                                            drop(guard);
-                                            return;
-                                        }
-
-                                        drop(guard);
-
-                                        position_abs_diff = position_abs_diff_next;
-                                    }
-                                })
-                                .unwrap()
-                        };
-
-                        timer.every(step_delay).unwrap();
-
-                        let mut done_a = false;
-                        let mut done_b = false;
-                        let mut result: Option<(event::Action, event::Context)> = None;
-
-                        while !done_a && !done_b {
-                            flume::Selector::new()
-                                .recv(&rx_done, |success| {
-                                    let success = success.unwrap_or(false);
-                                    if success {
-                                        tx_eventer_from_worker.send(event::reply_done(None, ctx.clone()));
-                                    } else {
-                                        tx_eventer_from_worker.send(event::reply_error(
-                                            String::from("failed; guess logical error; move left right position_current and final etc, gets confusing. This needs a fix!!"),
-                                            ctx.clone(),
-                                        ));
-                                    }
-                                    done_a = true;
-                                })
-                                .recv(&rx_worker, |e| {
-                                    let (action, ctx_next) = e.unwrap();
-                                    match action {
-                                        event::Action::ActionGet((action_get)) => {
-                                            // while action_run is active, answer to simple action_get commands
-                                            fn_handle_get(action_get, ctx_next);
-                                        }
-                                        _ => {
-                                            // got action_set/run, this terminates the active action_run command
-                                            result = Some((action, ctx_next));
-                                            done_b = true;
-                                            tx_eventer_from_worker.send(event::Event::ActionReply((
-                                                event::ActionReply::Cancel(),
-                                                ctx.clone(),
-                                            )));
-                                        }
-                                    }
-                                })
-                                .wait();
-                        }
-
-                        timer.cancel();
-                        drop(timer);
-
-                        result
-                    };
-
-                    let fn_stepper1_speed = |data: &event::DataReqRunStepper1Speed, ctx: event::Context, dir: uln2003::Direction| -> Option<(event::Action, event::Context)> {
-                        tx_eventer_from_worker.send(event::reply_ack(None, ctx.clone()));
-
-                        let step_delay = std::time::Duration::from_micros(data.speed);
-                        let mut stepper_guard = stepper1.lock().unwrap();
-                        stepper_guard.set_direction(dir);
-                        drop(stepper_guard);
-
-                        let timer = unsafe {
-                            let stepper1 = std::sync::Arc::clone(&stepper1);
-                            timer_service
-                                .timer_nonstatic(move || {
-                                    let mut stepper_guard = stepper1.lock().unwrap();
-                                    stepper_guard.step();
-                                    drop(stepper_guard);
-                                })
-                                .unwrap()
-                        };
-
-                        timer.every(step_delay).unwrap();
-
-                        let mut result: Option<(event::Action, event::Context)> = None;
-
-                        loop {
-                            let (action, ctx) = rx_worker.recv().unwrap();
-                            match action {
-                                event::Action::ActionGet((action_get)) => {
-                                    // while action_run is active, answer to simple action_get commands
-                                    fn_handle_get(action_get, ctx);
-                                    continue;
-                                }
-                                _ => {
-                                    // got action_set/run, this terminates the active action_run command
-                                    result = Some((action, ctx));
-                                    break;
-                                }
-                            }
-                        }
-
-                        timer.cancel();
-                        drop(timer);
-
-                        let mut stepper_guard = stepper1.lock().unwrap();
-                        stepper_guard.stop();
-                        drop(stepper_guard);
-
-                        tx_eventer_from_worker.send(event::Event::ActionReply((
-                            event::ActionReply::Cancel(),
-                            ctx.clone(),
-                        )));
-
-                        result
-                    };
-
-                    'loop_recv: loop {
-                        let mut recv = rx_worker.recv().unwrap();
-                        'loop_match: loop {
-                            let action = recv.0;
-                            let ctx = recv.1;
-                            match action {
-                                event::Action::ActionGet((action_get)) => {
-                                    fn_handle_get(action_get, ctx);
-                                    continue 'loop_recv;
-                                }
-                                event::Action::ActionRun((action_run)) => match action_run {
-                                    event::ActionRun::P2PInit { ref data } => {
-                                        tx_eventer_from_worker.send(event::reply_ack(None, ctx.clone()));
-                                        let mut guard = p2p_token.lock().unwrap();
-                                        *guard = data.p2p_token;
-                                        drop(guard);
-
-                                        tx_eventer_from_worker.send(event::reply_done(None, ctx.clone()));
-                                        continue 'loop_recv;
-                                    }
-                                    event::ActionRun::Stop() => continue 'loop_recv,
-                                    event::ActionRun::Stepper1MoveTo { ref data } => match fn_stepper1_move_to(data, &ctx) {
-                                        Some(recv_new) => {
-                                            recv = recv_new;
-                                            continue 'loop_match;
-                                        }
-                                        None => continue 'loop_recv,
-                                    },
-                                    event::ActionRun::Stepper1SpeedLeft { ref data } => match fn_stepper1_speed(data, ctx.clone(), uln2003::Direction::Normal) {
-                                        Some(recv_new) => {
-                                            recv = recv_new;
-                                            continue 'loop_match;
-                                        }
-                                        None => continue 'loop_recv,
-                                    },
-                                    event::ActionRun::Stepper1SpeedRight { ref data } => match fn_stepper1_speed(data, ctx.clone(), uln2003::Direction::Reverse) {
-                                        Some(recv_new) => {
-                                            recv = recv_new;
-                                            continue 'loop_match;
-                                        }
-                                        None => continue 'loop_recv,
-                                    },
-                                    event::ActionRun::UpdateBoard { data } => {
-                                        handler_update_board(data, ctx);
-                                        continue 'loop_recv;
-                                    }
-                                    _ => continue 'loop_recv,
-                                },
-                                _ => continue 'loop_recv,
-                            }
-                        }
-                    }
-                })
-                .unwrap();
-        });
+					'loop_recv: loop {
+						let (mut action, mut ctx) = rx_worker.recv().unwrap();
+						'loop_match: loop {
+							match action {
+								event::Action::ActionGet((ref action_get)) => {
+									fn_handle_get(action_get, &ctx);
+									continue;
+								}
+								event::Action::ActionRun((ref action_run)) => {
+									let (tx_cancel, rx_cancel) = flume::bounded(1);
+									let mut recv_next: Option<(event::Action, event::Context)> = None;
+									std::thread::scope(|s| {
+										s.spawn(|| {
+											std::thread::Builder::new()
+												.stack_size(4 * 1024)
+												.spawn_scoped(s, || {
+													fn_handle_run(action_run, &ctx, rx_cancel);
+												})
+										});
+										s.spawn(|| {
+											loop {
+												let (action_next, ctx_next) = rx_worker.recv().unwrap();
+												match action_next {
+													event::Action::ActionGet((ref action_get)) => {
+														// while action_run is active, answer to simple action_get commands
+														fn_handle_get(action_get, &ctx_next);
+														continue;
+													}
+													_ => {
+														// got action_set/run, this terminates the active action_run command
+														recv_next = Some((action_next, ctx_next));
+														//tx_cancel.try_send(true);
+														drop(tx_cancel); //this is like close(channel) in go, multiple threads get the signal
+														break;
+													}
+												}
+											}
+										});
+									});
+									if let Some((action_next, ctx_next)) = recv_next {
+										action = action_next;
+										ctx = ctx_next;
+										continue 'loop_match;
+									}
+									continue 'loop_recv;
+								}
+							}
+						}
+					}
+				})
+				.unwrap();
+		});
 	});
 }
 
@@ -613,89 +454,4 @@ fn connect_wifi(wifi: &mut BlockingWifi<EspWifi<'static>>) -> anyhow::Result<()>
 	info!("Wifi netif up");
 
 	Ok(())
-}
-
-fn get_firmware_info(buff: &[u8]) -> Result<FirmwareInfo, EspError> {
-	let mut loader = EspFirmwareInfoLoader::new();
-	loader.load(buff)?;
-	loader.get_info()
-}
-#[macro_export]
-macro_rules! esp_err {
-	($x:ident) => {
-		EspError::from_infallible::<$x>()
-	};
-}
-
-pub fn simple_download_and_update_firmware(url: String) -> Result<(), EspError> {
-	let mut client = Client::wrap(EspHttpConnection::new(
-		&esp_idf_svc::http::client::Configuration {
-			buffer_size: Some(1024 * 4),
-			..Default::default()
-		},
-	)?);
-
-	let headers = [("accept", "application/octet-stream")];
-
-	//let headers = [(ACCEPT.as_str(), mime::APPLICATION_OCTET_STREAM.as_ref())];
-	let surl = url.to_string();
-	let request = client
-		.request(Method::Get, &surl, &headers)
-		.map_err(|e| e.0)?;
-
-	let mut response = request.submit().map_err(|e| e.0)?;
-	if response.status() != 200 {
-		log::info!("Bad HTTP response: {}", response.status());
-		return Err(esp_err!(ESP_ERR_INVALID_RESPONSE));
-	}
-
-	let file_size = response.content_len().unwrap_or(0) as usize;
-	if file_size <= FIRMWARE_MIN_SIZE {
-		log::info!("File size is {file_size}, too small to be a firmware! No need to proceed further.");
-		return Err(esp_err!(ESP_ERR_IMAGE_INVALID));
-	}
-	if file_size > FIRMWARE_MAX_SIZE {
-		log::info!("File is too big ({file_size} bytes).");
-		return Err(esp_err!(ESP_ERR_IMAGE_INVALID));
-	}
-
-	let mut ota = EspOta::new()?;
-	let mut work = ota.initiate_update()?;
-	let mut buff = vec![0; FIRMWARE_DOWNLOAD_CHUNK_SIZE];
-	let mut total_read_len: usize = 0;
-	let mut got_info = false;
-
-	let dl_result = loop {
-		let n = response.read(&mut buff).unwrap_or_default();
-		total_read_len += n;
-		if !got_info {
-			match get_firmware_info(&buff[..n]) {
-				Ok(info) => log::info!("Firmware to be downloaded: {info:?}"),
-				Err(e) => {
-					log::error!("Failed to get firmware info from downloaded bytes!");
-					break Err(e);
-				}
-			};
-			got_info = true;
-		}
-		if n > 0 {
-			if let Err(e) = work.write(&buff[..n]) {
-				log::error!("Failed to write to OTA. {e}");
-				break Err(e);
-			}
-		}
-		if total_read_len >= file_size {
-			break Ok(());
-		}
-	};
-	if dl_result.is_err() {
-		return work.abort();
-	}
-	if total_read_len < file_size {
-		log::error!(
-			"Supposed to download {file_size} bytes, but we could only get {total_read_len}. May be network error?"
-		);
-		return work.abort();
-	}
-	work.complete()
 }
