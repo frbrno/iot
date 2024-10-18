@@ -2,18 +2,21 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"log"
-	"strings"
 	"time"
 
+	"github.com/frbrno/iot/node/goofy_hawk/lib/prot"
 	"github.com/gofiber/fiber/v3"
-	"github.com/nats-io/nats.go"
 )
 
 func main() {
 	var path_binary string
+	var nats_url string
+	var peer_name string
 	flag.StringVar(&path_binary, "path_binary", "/tmp/rusty_falcon_firmware.bin", "file for update board ota")
+	flag.StringVar(&nats_url, "nats_url", "192.168.10.124:4222", "nats url")
+	flag.StringVar(&peer_name, "peer_name", "rusty_falcon", "peer name")
+
 	flag.Parse()
 
 	app := fiber.New()
@@ -38,45 +41,27 @@ func main() {
 		}
 	}()
 
-	nc, err := nats.Connect("192.168.10.124:4222")
+	conn, err := prot.Connect(nats_url, "update_board")
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer nc.Close()
+	//defer conn.Close()
 
-	time.Sleep(time.Second * 2)
-	token := time.Now().Unix()
-
-	sig_msg := make(chan *nats.Msg, 3)
-	sub, err := nc.ChanSubscribe(fmt.Sprintf("rusty_falcon.goofy_hawk.update_board.*.%v", token), sig_msg)
+	peer, err := prot.NewPeer(conn, peer_name)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer sub.Unsubscribe()
+	defer peer.Close()
 
-	err = nc.Publish(fmt.Sprintf("goofy_hawk.rusty_falcon.update_board.run.%v", token), []byte(`{"url":"http://192.168.10.130:3242/rusty_falcon_firmware.bin"}`))
+	t_begin := time.Now()
+	err = peer.Request().
+		SetPayload([]byte(`{"url":"http://192.168.10.130:3242/rusty_falcon_firmware.bin"}`)).
+		SetTimeoutDone(time.Minute).
+		Run("update_board")
+
 	if err != nil {
 		log.Fatal(err)
 	}
-	select {
-	case <-time.After(time.Second * 6):
-		log.Fatal("timeout ack")
-	case msg := <-sig_msg:
-		spl := strings.Split(msg.Subject, ".")
-		if spl[3] != "ack" {
-			log.Fatalf("protocol err? subject: %s", msg.Subject)
-		}
-	}
-	log.Printf("rx board ack, update process starded")
 
-	select {
-	case <-time.After(time.Minute):
-		log.Fatal("timeout waiting for done")
-	case msg := <-sig_msg:
-		spl := strings.Split(msg.Subject, ".")
-		if spl[3] != "done" {
-			log.Fatalf("process got canceled or error subject: %s", msg.Subject)
-		}
-		log.Printf("success, the board restarts itself")
-	}
+	log.Printf("success! elapsed: %s", time.Since(t_begin).String())
 }
