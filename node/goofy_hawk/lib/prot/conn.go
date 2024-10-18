@@ -57,25 +57,25 @@ type Conn struct {
 	peers     map[string]*Peer
 }
 
-type MsgTyp string
+type EventTyp string
 type ActionTyp string
 
 const (
-	MsgTyp_All      = "*"
-	MsgTyp_Ack      = "ack"
-	MsgTyp_Error    = "error"
-	MsgTyp_Done     = "done"
-	MsgTyp_Cancel   = "cancel"
-	MsgTyp_Get      = "get"
-	MsgTyp_Set      = "set"
-	MsgTyp_Run      = "run"
-	MsgTyp_Internal = "internal"
+	EventTyp_All      = "*"
+	EventTyp_Ack      = "ack"
+	EventTyp_Error    = "error"
+	EventTyp_Done     = "done"
+	EventTyp_Cancel   = "cancel"
+	EventTyp_Get      = "get"
+	EventTyp_Set      = "set"
+	EventTyp_Run      = "run"
+	EventTyp_Internal = "internal"
 )
 
-type Msg struct {
+type Event struct {
 	*nats.Msg
-	Typ    MsgTyp
-	Action string
-	Name   string
-	Error  error
+	Typ      EventTyp
+	Name     string
+	PeerName string
+	Error    error
 }

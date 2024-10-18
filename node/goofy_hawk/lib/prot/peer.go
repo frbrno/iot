@@ -40,6 +40,7 @@ func NewPeer(conn *Conn, name string) (*Peer, error) {
 
 			err := p.Request().
 				setIgnoreOffline().
+				SetSigCancel(p.sig_close).
 				SetTimeoutDone(time.Second * 6).
 				SetPayload([]byte(fmt.Sprintf(`{"p2p_token":%v}`, p2p_token))).
 				Run("p2p_init")
@@ -90,7 +91,7 @@ func NewPeer(conn *Conn, name string) (*Peer, error) {
 				if success && err != nil {
 					success = false
 				}
-				if success && msg.Typ != MsgTyp_Ack {
+				if success && msg.Typ != EventTyp_Ack {
 					success = false
 				}
 				if success && data.P2PToken != p2p_token {
@@ -140,10 +141,16 @@ type Peer struct {
 	sig_close   chan struct{}
 }
 
+func (p *Peer) IsConnected() bool {
+	p.conn.mu.RLock()
+	defer p.conn.mu.RUnlock()
+
+	return !p.is_offline
+}
+
 func (p *Peer) Close() {
 	p.conn.mu.Lock()
 	if p.is_closed {
-		//already closed
 		p.conn.mu.Unlock()
 		return
 	}
