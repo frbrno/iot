@@ -5,6 +5,4 @@ max_width = 100
 hard_tabs = true
 tab_spaces = 1
 style_edition = "2024"
-comment_width = 100
-wrap_comments = true
-format_code_in_doc_comments = true
+newline_style = "Unix"

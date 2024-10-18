@@ -319,11 +319,10 @@ fn main() {
                             tx_eventer_from_worker.send(event::reply_ack(Some(data), ctx.clone()));
                         }
                     };
-
                     let handler_update_board = |data: event::DataReqRunUpdateBoard, ctx: event::Context| {
                         std::thread::scope(|s| {
                             s.spawn(|| {
-                                std::thread::Builder::new()
+                                    std::thread::Builder::new()
                                     .stack_size(4 * 1024)
                                     .spawn_scoped(s, || {
                                         tx_eventer_from_worker.send(event::reply_ack(None, ctx.clone()));

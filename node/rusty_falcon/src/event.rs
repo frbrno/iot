@@ -82,11 +82,11 @@ pub enum Event {
 }
 
 pub fn reply_ack(data: Option<ReplyData>, ctx: Context) -> Event {
-	Event::ActionReply((ActionReply::Ack { data: data }, ctx))
+	Event::ActionReply((ActionReply::Ack { data }, ctx))
 }
 
 pub fn reply_done(data: Option<ReplyData>, ctx: Context) -> Event {
-	Event::ActionReply((ActionReply::Done { data: data }, ctx))
+	Event::ActionReply((ActionReply::Done { data }, ctx))
 }
 
 pub fn reply_error(msg: String, ctx: Context) -> Event {
