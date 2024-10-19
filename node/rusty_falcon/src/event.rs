@@ -29,6 +29,7 @@ pub fn from_mqtt(topic: &str, data: &[u8]) -> Result<(Cmd, Context)> {
 	match (ctx.event_typ.as_str(), ctx.event.as_str()) {
 		("get", "stepper1_state") => Ok((Cmd::CmdGet(CmdGet::Stepper1State()), ctx)),
 		("get", "p2p_token") => Ok((Cmd::CmdGet(CmdGet::P2PToken()), ctx)),
+		("get", "info") => Ok((Cmd::CmdGet(CmdGet::Info()), ctx)),
 		("run", "p2p_init") => Ok((
 			Cmd::CmdRun(CmdRun::P2PInit {
 				data: serde_json::from_slice(data)?,
@@ -127,6 +128,7 @@ pub enum CmdRun {
 pub enum CmdGet {
 	Stepper1State(),
 	P2PToken(),
+	Info(),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -177,6 +179,9 @@ pub enum ReplyData {
 	},
 	P2PToken {
 		p2p_token: i64,
+	},
+	Info {
+		build_time: String,
 	},
 }
 

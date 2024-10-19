@@ -1,4 +1,5 @@
 use crate::{
+	BUILD_TIME,
 	event,
 	otaupdate,
 	stepper,
@@ -233,6 +234,12 @@ impl Handler {
 				drop(guard);
 
 				let data = event::ReplyData::P2PToken { p2p_token: token };
+				self.tx_event.send(event::reply_ack(Some(data), ctx));
+			}
+			event::CmdGet::Info() => {
+				let data = event::ReplyData::Info {
+					build_time: BUILD_TIME.to_string(),
+				};
 				self.tx_event.send(event::reply_ack(Some(data), ctx));
 			}
 		}
