@@ -47,10 +47,7 @@ func main() {
 	}
 	//defer conn.Close()
 
-	peer, err := prot.NewPeer(conn, peer_name)
-	if err != nil {
-		log.Fatal(err)
-	}
+	peer := prot.NewPeer(conn, peer_name)
 	defer peer.Close()
 
 	t_begin := time.Now()

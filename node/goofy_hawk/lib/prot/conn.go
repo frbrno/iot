@@ -57,8 +57,12 @@ type Conn struct {
 	peers     map[string]*Peer
 }
 
+func (c *Conn) Close() {
+	//TODO peer close
+	c.nc.Close()
+}
+
 type EventTyp string
-type ActionTyp string
 
 const (
 	EventTyp_All      = "*"

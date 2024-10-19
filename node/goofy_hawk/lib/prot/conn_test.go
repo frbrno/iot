@@ -17,10 +17,8 @@ func TestPeer(t *testing.T) {
 	}
 	defer conn.nc.Close()
 
-	peer1, err := NewPeer(conn, name_rusty_falcon)
-	if err != nil {
-		t.Fatal(err)
-	}
+	peer1 := NewPeer(conn, name_rusty_falcon)
+
 	_ = peer1
 	time.Sleep(time.Minute * 30)
 }
@@ -32,10 +30,7 @@ func TestRequest(t *testing.T) {
 	}
 	defer conn.nc.Close()
 
-	peer1, err := NewPeer(conn, name_rusty_falcon)
-	if err != nil {
-		t.Fatal(err)
-	}
+	peer1 := NewPeer(conn, name_rusty_falcon)
 
 	gen_data_stepper1_move_to := func(position_final uint) []byte {
 		return []byte(fmt.Sprintf(`{"position_final": %v,"step_delay_micros":1000}`, position_final))
@@ -67,9 +62,14 @@ func TestRequestInfinite(t *testing.T) {
 	}
 	defer conn.nc.Close()
 
-	peer1, err := NewPeer(conn, name_rusty_falcon)
-	if err != nil {
-		t.Fatal(err)
+	peer1 := NewPeer(conn, name_rusty_falcon)
+
+	is_online_sig := peer1.IsOnOfflineSig(true)
+	select {
+	case <-time.After(time.Second * 6):
+		peer1.IsOnOfflineSigUnsubscribe(is_online_sig)
+		t.Fatal("peer connect timeout")
+	case <-is_online_sig:
 	}
 
 	gen_data_stepper1_move_to := func(position_final uint) []byte {
