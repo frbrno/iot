@@ -46,3 +46,4 @@ uln2003 = "0.3"
 
 [build-dependencies]
 embuild = "0.32.0"
+chrono = "0.4.19"
