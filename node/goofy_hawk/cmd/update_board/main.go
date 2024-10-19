@@ -56,7 +56,7 @@ func main() {
 	t_begin := time.Now()
 	err = peer.Request().
 		SetPayload([]byte(`{"url":"http://192.168.10.130:3242/rusty_falcon_firmware.bin"}`)).
-		SetTimeoutDone(time.Minute).
+		SetDoneTimeout(time.Minute).
 		Run("update_board")
 
 	if err != nil {
