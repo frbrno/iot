@@ -64,12 +64,9 @@ func TestRequestInfinite(t *testing.T) {
 
 	peer1 := NewPeer(conn, name_rusty_falcon)
 
-	is_online_sig := peer1.IsOnOfflineSig(true)
-	select {
-	case <-time.After(time.Second * 6):
-		peer1.IsOnOfflineSigUnsubscribe(is_online_sig)
+	err = peer1.IsOnOfflineSigBlocking(true, time.Second*6)
+	if err != nil {
 		t.Fatal("peer connect timeout")
-	case <-is_online_sig:
 	}
 
 	gen_data_stepper1_move_to := func(position_final uint) []byte {
