@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/frbrno/iot/node/goofy_hawk/lib/prot"
+	"github.com/frbrno/iot/node/goofy_hawk/lib/everpc"
 	"github.com/gofiber/fiber/v3"
 )
 
@@ -41,13 +41,13 @@ func main() {
 		}
 	}()
 
-	conn, err := prot.Connect(nats_url, "update_board")
+	conn, err := everpc.Connect(nats_url, "update_board")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer conn.Close()
 
-	peer := prot.NewPeer(conn, peer_name)
+	peer := everpc.NewPeer(conn, peer_name)
 	defer peer.Close()
 
 	peer.IsOnOfflineSigBlocking(true, time.Second*6)
