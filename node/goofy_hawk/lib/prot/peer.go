@@ -9,13 +9,13 @@ import (
 func NewPeer(conn *Conn, name string) (*Peer, error) {
 	conn.mu.Lock()
 	if p := conn.peers[name]; p != nil {
-		is_init, sig_init := p.is_init, p.sig_init
+		is_init, is_init_sig := p.is_init, p.is_init_sig
 		conn.mu.Unlock()
 		if !is_init {
 			select {
 			case <-time.After(time.Second * 10):
 				return nil, ErrDisconnected
-			case <-sig_init:
+			case <-is_init_sig:
 				return p, nil
 			}
 		}
@@ -23,10 +23,10 @@ func NewPeer(conn *Conn, name string) (*Peer, error) {
 	}
 
 	p := &Peer{
-		conn:      conn,
-		name:      name,
-		sig_close: make(chan struct{}),
-		sig_init:  make(chan struct{}),
+		conn:         conn,
+		name:         name,
+		is_close_sig: make(chan struct{}),
+		is_init_sig:  make(chan struct{}),
 	}
 
 	conn.peers[name] = p
@@ -40,8 +40,8 @@ func NewPeer(conn *Conn, name string) (*Peer, error) {
 
 			err := p.Request().
 				setIgnoreOffline().
-				SetSigCancel(p.sig_close).
-				SetTimeoutDone(time.Second * 6).
+				SetCancelSig(p.is_close_sig).
+				SetDoneTimeout(time.Second * 6).
 				SetPayload([]byte(fmt.Sprintf(`{"p2p_token":%v}`, p2p_token))).
 				Run("p2p_init")
 
@@ -50,7 +50,7 @@ func NewPeer(conn *Conn, name string) (*Peer, error) {
 				select {
 				case <-ticker.C:
 					continue
-				case <-p.sig_close:
+				case <-p.is_close_sig:
 					return
 				}
 			}
@@ -64,16 +64,16 @@ func NewPeer(conn *Conn, name string) (*Peer, error) {
 			}
 			if !p.is_init {
 				p.is_init = true
-				close(p.sig_init)
+				close(p.is_init_sig)
 			}
 			p.p2p_token = p2p_token
 			p.is_offline = false
-			p.sig_offline = make(chan struct{})
+			p.is_offline_sig = make(chan struct{})
 			p.conn.mu.Unlock()
 
 			for {
 				select {
-				case <-p.sig_close:
+				case <-p.is_close_sig:
 					return
 				case <-ticker.C:
 				}
@@ -83,8 +83,8 @@ func NewPeer(conn *Conn, name string) (*Peer, error) {
 				}{}
 
 				msg, err := p.Request().
-					SetResultAck(&data).
-					SetTimeoutAck(time.Second * 6).
+					SetAckResult(&data).
+					SetAckTimeout(time.Second * 6).
 					Get("p2p_token")
 
 				success := true
@@ -107,7 +107,7 @@ func NewPeer(conn *Conn, name string) (*Peer, error) {
 						return
 					}
 					p.is_offline = true
-					close(p.sig_offline)
+					close(p.is_offline_sig)
 					p.p2p_token = 0
 					p.conn.mu.Unlock()
 					break
@@ -120,7 +120,7 @@ func NewPeer(conn *Conn, name string) (*Peer, error) {
 	case <-time.After(time.Second * 10):
 		p.Close()
 		return nil, ErrDisconnected
-	case <-p.sig_init:
+	case <-p.is_init_sig:
 		return p, nil
 	}
 }
@@ -129,19 +129,19 @@ type Peer struct {
 	conn      *Conn
 	name      string
 	p2p_token int64
-	// need is/sig_init
+	// need is/is_init_sig
 	// NewPeer could be called concurrent
 	// need to protect from panics
 	// so many channels, TODO
-	is_init     bool
-	sig_init    chan struct{}
-	is_offline  bool
-	sig_offline chan struct{}
-	is_closed   bool
-	sig_close   chan struct{}
+	is_init        bool
+	is_init_sig    chan struct{}
+	is_offline     bool
+	is_offline_sig chan struct{}
+	is_closed      bool
+	is_close_sig   chan struct{}
 }
 
-func (p *Peer) IsConnected() bool {
+func (p *Peer) IsOnline() bool {
 	p.conn.mu.RLock()
 	defer p.conn.mu.RUnlock()
 
@@ -157,14 +157,14 @@ func (p *Peer) Close() {
 	p.is_closed = true
 	p.is_offline = true
 	delete(p.conn.peers, p.name)
-	close(p.sig_close)
+	close(p.is_close_sig)
 	p.conn.mu.Unlock()
 }
 
 func (p *Peer) Request() *Request {
 	return &Request{
 		peer:         p,
-		timeout_ack:  6 * time.Second,
+		ack_timeout:  6 * time.Second,
 		timeout_done: time.Hour * 9999,
 	}
 }

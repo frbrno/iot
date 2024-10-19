@@ -12,18 +12,18 @@ import (
 )
 
 // Run helps to write less code, returns nil on success/done.
-// note: if u provide a 'sig_done' channel, it is not blocking
+// note: if u provide a 'done_sig' channel, it is not blocking
 func (r *Request) Run(event_name string) error {
 
-	fn_cancel, sig_event, err := r.request(EventTyp_Run, event_name, r.payload)
+	fn_cancel, event_sig, err := r.request(EventTyp_Run, event_name, r.payload)
 	if err != nil {
 		return err
 	}
 
 	select {
-	case <-time.After(r.timeout_ack):
+	case <-time.After(r.ack_timeout):
 		return ErrTimeout
-	case event := <-sig_event:
+	case event := <-event_sig:
 		if event.Error != nil {
 			return event.Error
 		}
@@ -41,7 +41,7 @@ func (r *Request) Run(event_name string) error {
 		select {
 		case <-timeout.C:
 			return ErrTimeout
-		case event := <-sig_event:
+		case event := <-event_sig:
 			switch event.Typ {
 			case EventTyp_Done:
 				return nil
@@ -55,9 +55,9 @@ func (r *Request) Run(event_name string) error {
 		}
 	}
 
-	if r.sig_done != nil {
+	if r.done_sig != nil {
 		go func() {
-			r.sig_done <- fn_recv()
+			r.done_sig <- fn_recv()
 		}()
 		return nil
 	}
@@ -66,16 +66,16 @@ func (r *Request) Run(event_name string) error {
 
 func (r *Request) Get(event_name string) (*Event, error) {
 
-	fn_cancel, sig_event, err := r.request(EventTyp_Get, event_name, r.payload)
+	fn_cancel, event_sig, err := r.request(EventTyp_Get, event_name, r.payload)
 	if err != nil {
 		return nil, err
 	}
 	defer fn_cancel()
 
 	select {
-	case <-time.After(r.timeout_ack):
+	case <-time.After(r.ack_timeout):
 		return nil, ErrTimeout
-	case event := <-sig_event:
+	case event := <-event_sig:
 		if event.Error != nil {
 			return nil, event.Error
 		}
@@ -88,14 +88,14 @@ func (r *Request) Get(event_name string) (*Event, error) {
 
 type Request struct {
 	peer         *Peer
-	timeout_ack  time.Duration
+	ack_timeout  time.Duration
 	timeout_done time.Duration
 	payload      []byte
 	result_ack   any
-	result_done  any
+	done_result  any
 
-	sig_done       chan error
-	sig_cancel     chan struct{}
+	done_sig       chan error
+	cancel_sig     chan struct{}
 	ignore_offline bool
 }
 
@@ -103,31 +103,31 @@ func (r *Request) SetPayload(b []byte) *Request {
 	r.payload = b
 	return r
 }
-func (r *Request) SetResultAck(v any) *Request {
+func (r *Request) SetAckResult(v any) *Request {
 	r.result_ack = v
 	return r
 }
-func (r *Request) SetResultDone(v any) *Request {
-	r.result_done = v
+func (r *Request) SetDoneResult(v any) *Request {
+	r.done_result = v
 	return r
 }
 
-func (r *Request) SetTimeoutAck(t time.Duration) *Request {
-	r.timeout_ack = t
+func (r *Request) SetAckTimeout(t time.Duration) *Request {
+	r.ack_timeout = t
 	return r
 }
 
-func (r *Request) SetSigDone(sig_done chan error) *Request {
-	r.sig_done = sig_done
+func (r *Request) SetDoneSig(done_sig chan error) *Request {
+	r.done_sig = done_sig
 	return r
 }
 
-func (r *Request) SetSigCancel(sig_cancel chan struct{}) *Request {
-	r.sig_cancel = sig_cancel
+func (r *Request) SetCancelSig(cancel_sig chan struct{}) *Request {
+	r.cancel_sig = cancel_sig
 	return r
 }
 
-func (r *Request) SetTimeoutDone(t time.Duration) *Request {
+func (r *Request) SetDoneTimeout(t time.Duration) *Request {
 	r.timeout_done = t
 	return r
 }
@@ -140,23 +140,23 @@ func (r *Request) setIgnoreOffline() *Request {
 func (r *Request) request(event_typ EventTyp, event_name string, payload []byte) (func(), <-chan *Event, error) {
 
 	r.peer.conn.mu.Lock()
-	sig_offline := r.peer.sig_offline
+	is_offline_sig := r.peer.is_offline_sig
 	if !r.ignore_offline {
 		if r.peer.is_closed || r.peer.is_offline {
 			r.peer.conn.mu.Unlock()
 			return nil, nil, ErrDisconnected
 		}
 	} else {
-		sig_offline = make(chan struct{})
+		is_offline_sig = make(chan struct{})
 	}
 	token := r.peer.conn.token
 	r.peer.conn.token++
 	r.peer.conn.mu.Unlock()
 
-	sig_event_nats := make(chan *nats.Msg, 10)
+	msg_nats_sig := make(chan *nats.Msg, 10)
 
 	sub_subject := fmt.Sprintf("%s.%s.%s.%s.%v", r.peer.name, r.peer.conn.name_self, event_name, EventTyp_All, token)
-	sub, err := r.peer.conn.nc.ChanSubscribe(sub_subject, sig_event_nats)
+	sub, err := r.peer.conn.nc.ChanSubscribe(sub_subject, msg_nats_sig)
 	if err != nil {
 		return nil, nil, errors.Join(ErrProtocol, err)
 	}
@@ -168,41 +168,41 @@ func (r *Request) request(event_typ EventTyp, event_name string, payload []byte)
 		return nil, nil, errors.Join(ErrProtocol, err)
 	}
 
-	sig_unsubscribe := make(chan struct{})
-	sig_unsubscribe_done := make(chan struct{})
-	sig_event := make(chan *Event, 10)
+	unsubscribe_sig := make(chan struct{})
+	unsubscribe_done_sig := make(chan struct{})
+	event_sig := make(chan *Event, 10)
 
 	go func() {
-		defer close(sig_unsubscribe_done)
+		defer close(unsubscribe_done_sig)
 		defer sub.Unsubscribe()
 
 		for {
 			select {
-			case <-sig_offline: //whatchdog 'p2p_token.get' gets no response
-				sig_event <- &Event{
+			case <-is_offline_sig: //whatchdog 'p2p_token.get' gets no response
+				event_sig <- &Event{
 					Typ:   EventTyp_Internal,
-					Error: errors.Join(ErrDisconnected, errors.New("sig_offline")),
+					Error: errors.Join(ErrDisconnected, errors.New("is_offline_sig")),
 				}
 				return
-			case <-sig_unsubscribe:
-				sig_event <- &Event{
+			case <-unsubscribe_sig:
+				event_sig <- &Event{
 					Typ:   EventTyp_Internal,
-					Error: errors.Join(ErrCanceled, errors.New("sig_unsubscribe")),
+					Error: errors.Join(ErrCanceled, errors.New("unsubscribe_sig")),
 				}
 				return
-			case <-r.peer.sig_close: // peer.Close() call
-				sig_event <- &Event{
+			case <-r.peer.is_close_sig: // peer.Close() call
+				event_sig <- &Event{
 					Typ:   EventTyp_Internal,
-					Error: errors.Join(ErrDisconnected, errors.New("sig_close")),
+					Error: errors.Join(ErrDisconnected, errors.New("is_close_sig")),
 				}
 				return
-			case <-r.sig_cancel: // caller provided cancel channel
-				sig_event <- &Event{
+			case <-r.cancel_sig: // caller provided cancel channel
+				event_sig <- &Event{
 					Typ:   EventTyp_Internal,
-					Error: errors.Join(ErrCanceled, errors.New("sig_cancel")),
+					Error: errors.Join(ErrCanceled, errors.New("cancel_sig")),
 				}
 				return
-			case msg_nats := <-sig_event_nats:
+			case msg_nats := <-msg_nats_sig:
 				spl := strings.Split(msg_nats.Subject, ".")
 				event := &Event{
 					Msg:      msg_nats,
@@ -220,10 +220,10 @@ func (r *Request) request(event_typ EventTyp, event_name string, payload []byte)
 					json.Unmarshal(msg_nats.Data, &data)
 					event.Error = errors.Join(ErrPeer, errors.New("message: "+data.Message))
 				case EventTyp_Done:
-					if r.result_done != nil {
-						err := json.Unmarshal(event.Data, r.result_done)
+					if r.done_result != nil {
+						err := json.Unmarshal(event.Data, r.done_result)
 						if err != nil {
-							sig_event <- &Event{
+							event_sig <- &Event{
 								Typ:   EventTyp_Internal,
 								Error: errors.Join(ErrProtocol, err),
 							}
@@ -234,7 +234,7 @@ func (r *Request) request(event_typ EventTyp, event_name string, payload []byte)
 					if r.result_ack != nil {
 						err := json.Unmarshal(event.Data, r.result_ack)
 						if err != nil {
-							sig_event <- &Event{
+							event_sig <- &Event{
 								Typ:   EventTyp_Internal,
 								Error: errors.Join(ErrProtocol, err),
 							}
@@ -243,7 +243,7 @@ func (r *Request) request(event_typ EventTyp, event_name string, payload []byte)
 					}
 				}
 
-				sig_event <- event
+				event_sig <- event
 			}
 		}
 	}()
@@ -252,11 +252,11 @@ func (r *Request) request(event_typ EventTyp, event_name string, payload []byte)
 
 	return func() {
 		once.Do(func() {
-			close(sig_unsubscribe)
-			<-sig_unsubscribe_done
-			close(sig_event)
-			// TODO: close sig_event_nats?
+			close(unsubscribe_sig)
+			<-unsubscribe_done_sig
+			close(event_sig)
+			// TODO: close msg_nats_sig?
 			// I think yes, the caller should be aware of it because he is the one calling unsubscribe
 		})
-	}, sig_event, nil
+	}, event_sig, nil
 }

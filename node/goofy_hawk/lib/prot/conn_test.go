@@ -40,10 +40,10 @@ func TestRequest(t *testing.T) {
 	gen_data_stepper1_move_to := func(position_final uint) []byte {
 		return []byte(fmt.Sprintf(`{"position_final": %v,"step_delay_micros":1000}`, position_final))
 	}
-	sig_done := make(chan error, 1)
+	done_sig := make(chan error, 1)
 
 	err = peer1.Request().
-		SetSigDone(sig_done).
+		SetDoneSig(done_sig).
 		SetPayload(gen_data_stepper1_move_to(20000)).
 		Run("stepper1_move_to")
 
@@ -51,7 +51,7 @@ func TestRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = <-sig_done
+	err = <-done_sig
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,10 +77,10 @@ func TestRequestInfinite(t *testing.T) {
 	}
 	position_final := uint(10000)
 	for {
-		sig_done := make(chan error, 1)
+		done_sig := make(chan error, 1)
 
 		err = peer1.Request().
-			SetSigDone(sig_done).
+			SetDoneSig(done_sig).
 			SetPayload(gen_data_stepper1_move_to(position_final)).
 			Run("stepper1_move_to")
 
@@ -88,7 +88,7 @@ func TestRequestInfinite(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = <-sig_done
+		err = <-done_sig
 		if err != nil {
 			t.Fatal(err)
 		}
