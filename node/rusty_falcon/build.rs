@@ -10,5 +10,5 @@ fn main() {
 	let outfile = format!("{}/timestamp.txt", outdir);
 
 	let mut fh = fs::File::create(&outfile).unwrap();
-	write!(fh, r#""{}""#, chrono::Utc::now().timestamp()).ok();
+	write!(fh, r#""{}""#, chrono::Local::now()).ok();
 }
