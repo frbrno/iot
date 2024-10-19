@@ -64,7 +64,7 @@ const FIRMWARE_MIN_SIZE: usize = size_of::<FirmwareInfo>() + 1024;
 const SSID: &str = env!("WIFI_SSID");
 const PASSWORD: &str = env!("WIFI_PASS");
 
-const HELLO: &str = "HiThere69696969";
+const HELLO: &str = "HiThere123456";
 
 const MQTT_URL: &str = "mqtt://192.168.10.124:1880";
 const MQTT_CLIENT_ID: &str = "rusty_falcon";
