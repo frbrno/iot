@@ -3,30 +3,24 @@ package prot
 import (
 	"fmt"
 	"log"
+	"sync"
 	"time"
 )
 
-func NewPeer(conn *Conn, name string) (*Peer, error) {
+func NewPeer(conn *Conn, name string) *Peer {
 	conn.mu.Lock()
 	if p := conn.peers[name]; p != nil {
-		is_init, is_init_sig := p.is_init, p.is_init_sig
 		conn.mu.Unlock()
-		if !is_init {
-			select {
-			case <-time.After(time.Second * 10):
-				return nil, ErrDisconnected
-			case <-is_init_sig:
-				return p, nil
-			}
-		}
-		return p, nil
+		return p
 	}
 
 	p := &Peer{
-		conn:         conn,
-		name:         name,
-		is_close_sig: make(chan struct{}),
-		is_init_sig:  make(chan struct{}),
+		mu:                     conn.mu,
+		conn:                   conn,
+		name:                   name,
+		is_close_sig:           make(chan struct{}),
+		is_init_sig:            make(chan struct{}),
+		is_on_offline_sig_list: make(map[chan struct{}]bool),
 	}
 
 	conn.peers[name] = p
@@ -67,8 +61,13 @@ func NewPeer(conn *Conn, name string) (*Peer, error) {
 				close(p.is_init_sig)
 			}
 			p.p2p_token = p2p_token
-			p.is_offline = false
-			p.is_offline_sig = make(chan struct{})
+			p.is_online = true
+			for is_online_sig, online := range p.is_on_offline_sig_list {
+				if online {
+					close(is_online_sig)
+					delete(p.is_on_offline_sig_list, is_online_sig)
+				}
+			}
 			p.conn.mu.Unlock()
 
 			for {
@@ -100,14 +99,19 @@ func NewPeer(conn *Conn, name string) (*Peer, error) {
 
 				if !success {
 					log.Printf("[%s] p2p_token watchdog fail", p.name)
+					for is_offline_sig, online := range p.is_on_offline_sig_list {
+						if !online {
+							close(is_offline_sig)
+							delete(p.is_on_offline_sig_list, is_offline_sig)
+						}
+					}
 
 					p.conn.mu.Lock()
 					if p.is_closed {
 						p.conn.mu.Unlock()
 						return
 					}
-					p.is_offline = true
-					close(p.is_offline_sig)
+					p.is_online = false
 					p.p2p_token = 0
 					p.conn.mu.Unlock()
 					break
@@ -116,16 +120,11 @@ func NewPeer(conn *Conn, name string) (*Peer, error) {
 		}
 	}()
 
-	select {
-	case <-time.After(time.Second * 10):
-		p.Close()
-		return nil, ErrDisconnected
-	case <-p.is_init_sig:
-		return p, nil
-	}
+	return p
 }
 
 type Peer struct {
+	mu        *sync.RWMutex //same as conn.mu
 	conn      *Conn
 	name      string
 	p2p_token int64
@@ -133,19 +132,43 @@ type Peer struct {
 	// NewPeer could be called concurrent
 	// need to protect from panics
 	// so many channels, TODO
-	is_init        bool
-	is_init_sig    chan struct{}
-	is_offline     bool
-	is_offline_sig chan struct{}
-	is_closed      bool
-	is_close_sig   chan struct{}
+	is_init                bool
+	is_init_sig            chan struct{}
+	is_online              bool
+	is_closed              bool
+	is_close_sig           chan struct{}
+	is_on_offline_sig_list map[chan struct{}]bool
 }
 
 func (p *Peer) IsOnline() bool {
 	p.conn.mu.RLock()
 	defer p.conn.mu.RUnlock()
 
-	return !p.is_offline
+	return p.is_online
+}
+
+// IsOnOfflineSig the returned channel fires if the peer come online/offline
+// call unsubscribe if u ignore the signal
+func (p *Peer) IsOnOfflineSig(on_or_off bool) chan struct{} {
+	is_on_offline_sig := make(chan struct{})
+	p.mu.Lock()
+	if !p.is_online {
+		close(is_on_offline_sig)
+		p.mu.Unlock()
+		return is_on_offline_sig
+	}
+	p.is_on_offline_sig_list[is_on_offline_sig] = on_or_off
+	p.mu.Unlock()
+	return is_on_offline_sig
+}
+
+func (p *Peer) IsOnOfflineSigUnsubscribe(is_on_offline_sig chan struct{}) {
+	p.mu.Lock()
+	// TODO check has been closed, if not, close it, otherwise dangling ref
+	// not sure if gc can handle this
+	// ok for now
+	delete(p.is_on_offline_sig_list, is_on_offline_sig)
+	p.mu.Unlock()
 }
 
 func (p *Peer) Close() {
@@ -155,9 +178,16 @@ func (p *Peer) Close() {
 		return
 	}
 	p.is_closed = true
-	p.is_offline = true
+	p.is_online = false
 	delete(p.conn.peers, p.name)
 	close(p.is_close_sig)
+	for is_offline_sig, online := range p.is_on_offline_sig_list {
+		if !online {
+			close(is_offline_sig)
+		}
+		//here delete all online and offline references to the channels
+		delete(p.is_on_offline_sig_list, is_offline_sig)
+	}
 	p.conn.mu.Unlock()
 }
 

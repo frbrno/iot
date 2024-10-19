@@ -140,15 +140,26 @@ func (r *Request) setIgnoreOffline() *Request {
 func (r *Request) request(event_typ EventTyp, event_name string, payload []byte) (func(), <-chan *Event, error) {
 
 	r.peer.conn.mu.Lock()
-	is_offline_sig := r.peer.is_offline_sig
+
 	if !r.ignore_offline {
-		if r.peer.is_closed || r.peer.is_offline {
+		if !r.peer.is_online {
 			r.peer.conn.mu.Unlock()
 			return nil, nil, ErrDisconnected
 		}
-	} else {
-		is_offline_sig = make(chan struct{})
 	}
+
+	if r.peer.is_closed {
+		r.peer.conn.mu.Unlock()
+		return nil, nil, ErrDisconnected
+	}
+
+	var is_offline_sig chan struct{}
+	if r.ignore_offline {
+		is_offline_sig = make(chan struct{})
+	} else {
+		r.peer.is_on_offline_sig_list[is_offline_sig] = false
+	}
+
 	token := r.peer.conn.token
 	r.peer.conn.token++
 	r.peer.conn.mu.Unlock()
@@ -255,6 +266,8 @@ func (r *Request) request(event_typ EventTyp, event_name string, payload []byte)
 			close(unsubscribe_sig)
 			<-unsubscribe_done_sig
 			close(event_sig)
+			r.peer.IsOnOfflineSigUnsubscribe(is_offline_sig)
+
 			// TODO: close msg_nats_sig?
 			// I think yes, the caller should be aware of it because he is the one calling unsubscribe
 		})
