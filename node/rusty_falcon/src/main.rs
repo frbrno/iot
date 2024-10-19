@@ -64,8 +64,7 @@ const FIRMWARE_MIN_SIZE: usize = size_of::<FirmwareInfo>() + 1024;
 const SSID: &str = env!("WIFI_SSID");
 const PASSWORD: &str = env!("WIFI_PASS");
 
-const HELLO: &str = "HiThere123456";
-
+const BUILD_TIME: &str = include!(concat!(env!("OUT_DIR"), "/timestamp.txt"));
 const MQTT_URL: &str = "mqtt://192.168.10.124:1880";
 const MQTT_CLIENT_ID: &str = "rusty_falcon";
 const MQTT_TOPIC: &str = "+/rusty_falcon/+/+/+";
@@ -77,7 +76,7 @@ fn main() {
 	esp_idf_svc::log::EspLogger::initialize_default();
 	unsafe { esp_wifi_set_max_tx_power(64) };
 
-	info!("{:?}", HELLO);
+	info!("build time {:?}", BUILD_TIME);
 	info!("ssid: {:?}, pw: {:?}", SSID, PASSWORD);
 	let peripherals = esp_idf_svc::hal::peripherals::Peripherals::take().unwrap();
 
@@ -201,7 +200,7 @@ fn main() {
 				break;
 			}
 			client.publish(
-				format!("rusty_falcon/hello/{:}", HELLO.to_string()).as_str(),
+				format!("rusty_falcon/hello/{}", BUILD_TIME).as_str(),
 				QoS::AtMostOnce,
 				false,
 				&[0],
