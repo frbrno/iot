@@ -12,9 +12,7 @@ use std::sync::{
 	Arc,
 	Mutex,
 };
-pub fn say_hello() {
-	println!("hello");
-}
+
 pub struct Handler {
 	pub p2p_token: Arc<Mutex<i64>>,
 	pub stepper1: Arc<Mutex<stepper::Stepper>>,
@@ -25,19 +23,24 @@ pub struct Handler {
 
 impl Handler {
 	pub fn new(
-		p2p_token: Arc<Mutex<i64>>,
 		stepper1: Arc<Mutex<stepper::Stepper>>,
 		tx_event: flume::Sender<(event::Event)>,
 		rx_event: flume::Receiver<(event::Cmd, event::Context)>,
 		timer_service: EspTimerService<Task>,
 	) -> Self {
 		Handler {
-			p2p_token,
+			p2p_token: Arc::new(Mutex::new(0)),
 			stepper1,
 			tx_event,
 			rx_event,
 			timer_service,
 		}
+	}
+
+	pub fn run_stop(&self, ctx: &event::Context, rx_cancel: flume::Receiver<bool>) {
+		self.tx_event.send(event::reply_ack(None, ctx));
+		self.tx_event.send(event::reply_done(None, ctx));
+		rx_cancel.recv(); // just hang here until next run commands comes
 	}
 
 	pub fn run_stepper1_move_to(
@@ -204,5 +207,123 @@ impl Handler {
 			event::CmdReply::Cancel(),
 			ctx.clone(),
 		)));
+	}
+
+	pub fn handle_loop(&mut self) {
+		// for this I hate rust
+		// clone everything to use in the fn_handle_get
+		// dunno how to do it the rust way
+		// I understand the reason, but all handler funcs use Mutex for the data
+		// TODO future me, hopefully with better rust skills
+		let rx_event = self.rx_event.clone();
+		let tx_event = self.tx_event.clone();
+		let stepper1 = self.stepper1.clone();
+		let p2p_token = self.p2p_token.clone();
+
+		let mut fn_handle_get = |cmd_get: &event::CmdGet, ctx: &event::Context| match cmd_get {
+			event::CmdGet::Stepper1State() => {
+				let guard = stepper1.lock().unwrap();
+				let mut direction = "";
+				match guard.direction {
+					uln2003::Direction::Normal => direction = "left",
+					uln2003::Direction::Reverse => direction = "right",
+				}
+				let mut data = event::ReplyData::Stepper1State {
+					position_current: guard.position_current,
+					direction: direction.to_string(),
+				};
+				drop(guard);
+
+				tx_event.send(event::reply_ack(Some(data), ctx));
+			}
+			event::CmdGet::P2PToken() => {
+				let guard = p2p_token.lock().unwrap();
+				let token = *guard;
+				drop(guard);
+
+				let data = event::ReplyData::P2PToken { p2p_token: token };
+				tx_event.send(event::reply_ack(Some(data), ctx));
+			}
+		};
+
+		let mut fn_handle_run = |cmd_run: &event::CmdRun,
+		                         ctx: &event::Context,
+		                         rx_cancel: flume::Receiver<bool>| match cmd_run
+		{
+			event::CmdRun::P2PInit { ref data } => {
+				self.run_p2p_init(data, ctx, rx_cancel);
+			}
+			event::CmdRun::UpdateBoard { ref data } => {
+				self.run_update_board(data, ctx, rx_cancel);
+			}
+			event::CmdRun::Stepper1MoveTo { ref data } => {
+				self.run_stepper1_move_to(data, ctx, rx_cancel);
+			}
+			event::CmdRun::Stepper1SpeedLeft { ref data } => {
+				self.run_stepper1_speed(data, ctx, uln2003::Direction::Normal, rx_cancel);
+			}
+			event::CmdRun::Stepper1SpeedRight { ref data } => {
+				self.run_stepper1_speed(data, ctx, uln2003::Direction::Reverse, rx_cancel);
+			}
+			event::CmdRun::Stop() => {
+				self.run_stop(ctx, rx_cancel);
+			}
+			_ => self
+				.tx_event
+				.send(event::reply_error(
+					String::from("fn_handle_run err: no handler impl"),
+					ctx,
+				))
+				.unwrap(),
+		};
+		'loop_recv: loop {
+			let (mut cmd, mut ctx) = rx_event.recv().unwrap();
+			'loop_match: loop {
+				match cmd {
+					event::Cmd::CmdGet((ref cmd_get)) => {
+						fn_handle_get(cmd_get, &ctx);
+						continue 'loop_recv;
+					}
+					event::Cmd::CmdRun((ref cmd_run)) => {
+						let (tx_cancel, rx_cancel) = flume::bounded(1);
+						let mut recv_next: Option<(event::Cmd, event::Context)> = None;
+						std::thread::scope(|s| {
+							s.spawn(|| {
+								std::thread::Builder::new()
+									.stack_size(4 * 1024)
+									.spawn_scoped(s, || {
+										fn_handle_run(cmd_run, &ctx, rx_cancel);
+									})
+							});
+							s.spawn(|| {
+								loop {
+									let (cmd_next, ctx_next) = rx_event.recv().unwrap();
+									match cmd_next {
+										event::Cmd::CmdGet((ref cmd_get)) => {
+											// while cmd_run is active, answer to simple cmd_get commands
+											fn_handle_get(cmd_get, &ctx_next);
+											continue;
+										}
+										_ => {
+											// got cmd_set/run, this terminates the active cmd_run command
+											recv_next = Some((cmd_next, ctx_next));
+											//tx_cancel.try_send(true);
+											drop(tx_cancel); //this is like close(channel) in go, multiple listener get the signal
+											break;
+										}
+									}
+								}
+							});
+						});
+						if let Some((cmd_next, ctx_next)) = recv_next {
+							cmd = cmd_next;
+							ctx = ctx_next;
+							continue 'loop_match;
+						}
+						continue 'loop_recv;
+					}
+				}
+			}
+		}
 	}
 }

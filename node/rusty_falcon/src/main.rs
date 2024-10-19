@@ -64,7 +64,7 @@ const FIRMWARE_MIN_SIZE: usize = size_of::<FirmwareInfo>() + 1024;
 const SSID: &str = env!("WIFI_SSID");
 const PASSWORD: &str = env!("WIFI_PASS");
 
-const HELLO: &str = "HiThere69";
+const HELLO: &str = "HiThere69696969";
 
 const MQTT_URL: &str = "mqtt://192.168.10.124:1880";
 const MQTT_CLIENT_ID: &str = "rusty_falcon";
@@ -72,60 +72,10 @@ const MQTT_TOPIC: &str = "+/rusty_falcon/+/+/+";
 // {src}.{dst}.stepper1_speed.{get,set,run}.{token}
 // {src}.{dst}.stepper1_speed.{ack,cancel,done,error}.{token}
 
-pub struct Stepper<T: uln2003::StepperMotor> {
-	ext: T,
-	pub position_current: usize,
-	pub direction: uln2003::Direction,
-}
-
-impl<T: uln2003::StepperMotor> Stepper<T> {
-	pub fn new(ext: T) -> Self {
-		Stepper {
-			ext,
-			position_current: 0,
-			direction: uln2003::Direction::Normal, //in my case 'right'
-		}
-	}
-
-	// ~190000 steps for my 2m linear rail
-	pub fn step(&mut self) -> Result<(), uln2003::StepError> {
-		match self.direction {
-			uln2003::Direction::Reverse => {
-				if self.position_current > 0 {
-					self.position_current -= 1;
-				}
-			}
-			uln2003::Direction::Normal => {
-				self.position_current += 1;
-			}
-		}
-		self.ext.step() //TODO error?
-	}
-	/// Do multiple steps with a given delay in ms
-	pub fn step_for(&mut self, steps: i32, delay: u32) -> Result<(), uln2003::StepError> {
-		self.ext.step_for(steps, delay)
-	}
-	/// Set the stepping direction
-	pub fn set_direction(&mut self, dir: uln2003::Direction) {
-		match dir {
-			uln2003::Direction::Normal => self.direction = uln2003::Direction::Normal,
-			uln2003::Direction::Reverse => self.direction = uln2003::Direction::Reverse,
-		}
-		self.ext.set_direction(dir)
-	}
-	/// Stoping sets all pins low
-	pub fn stop(&mut self) -> Result<(), uln2003::StepError> {
-		self.ext.stop()
-	}
-}
 fn main() {
 	esp_idf_svc::sys::link_patches();
 	esp_idf_svc::log::EspLogger::initialize_default();
-	unsafe { esp_wifi_set_max_tx_power(34) };
-
-	std::panic::set_hook(Box::new(|panic_info| {
-		println!("Custom panic hook: {:?}", panic_info);
-	}));
+	unsafe { esp_wifi_set_max_tx_power(64) };
 
 	info!("{:?}", HELLO);
 	info!("ssid: {:?}, pw: {:?}", SSID, PASSWORD);
@@ -180,16 +130,14 @@ fn main() {
 	let tx_eventer_from_worker = tx_event.clone();
 	let tx_eventer_from_mqtt = tx_event.clone();
 
-	let p2p_token = std::sync::Arc::new(std::sync::Mutex::new(0i64));
+	//let p2p_token = std::sync::Arc::new(std::sync::Mutex::new(0i64));
 
 	let mut handler = handler::Handler::new(
-		p2p_token.clone(),
 		stepper1.clone(),
 		tx_eventer_from_worker.clone(),
 		rx_worker.clone(),
 		timer_service.clone(),
 	);
-	handler::say_hello();
 
 	let _subscription = sys_loop.subscribe::<WifiEvent, _>(move |event| {
 		info!("[Subscribe callback] Got event: {:?}", event);
@@ -307,120 +255,12 @@ fn main() {
 				}
 			}
 		});
-		// worker
-		let p2p_token = std::sync::Arc::clone(&p2p_token);
+
 		s.spawn(|| {
 			std::thread::Builder::new()
 				.stack_size(4 * 1024)
-				.spawn_scoped(s, move || {
-					info!("spawn worker");
-					let mut timeout = std::time::Duration::from_millis(5);
-
-					let fn_handle_get = |cmd_get: &event::CmdGet, ctx: &event::Context| match cmd_get {
-						event::CmdGet::Stepper1State() => {
-							let guard = stepper1.lock().unwrap();
-							let mut direction = "";
-							match guard.direction {
-								uln2003::Direction::Normal => direction = "left",
-								uln2003::Direction::Reverse => direction = "right",
-							}
-							let mut data = event::ReplyData::Stepper1State {
-								position_current: guard.position_current,
-								direction: direction.to_string(),
-							};
-							drop(guard);
-
-							tx_eventer_from_worker.send(event::reply_ack(Some(data), ctx));
-						}
-						event::CmdGet::P2PToken() => {
-							let guard = p2p_token.lock().unwrap();
-							let token = *guard;
-							drop(guard);
-
-							let data = event::ReplyData::P2PToken { p2p_token: token };
-							tx_eventer_from_worker.send(event::reply_ack(Some(data), ctx));
-						}
-					};
-
-					let mut fn_handle_run =
-						|cmd_run: &event::CmdRun, ctx: &event::Context, rx_cancel: flume::Receiver<bool>| {
-							match cmd_run {
-								event::CmdRun::P2PInit { ref data } => {
-									handler.run_p2p_init(data, ctx, rx_cancel);
-								}
-								event::CmdRun::UpdateBoard { ref data } => {
-									handler.run_update_board(data, ctx, rx_cancel);
-								}
-								event::CmdRun::Stepper1MoveTo { ref data } => {
-									handler.run_stepper1_move_to(data, ctx, rx_cancel);
-								}
-								event::CmdRun::Stepper1SpeedLeft { ref data } => {
-									handler.run_stepper1_speed(data, ctx, uln2003::Direction::Normal, rx_cancel);
-								}
-								event::CmdRun::Stepper1SpeedRight { ref data } => {
-									handler.run_stepper1_speed(data, ctx, uln2003::Direction::Reverse, rx_cancel);
-								}
-								event::CmdRun::Stop() => {
-									rx_cancel.recv(); // just hang here until next run commands comes
-								}
-								_ => tx_eventer_from_worker
-									.send(event::reply_error(
-										String::from("fn_handle_run err: no handler impl"),
-										ctx,
-									))
-									.unwrap(),
-							}
-						};
-
-					'loop_recv: loop {
-						let (mut cmd, mut ctx) = rx_worker.recv().unwrap();
-						'loop_match: loop {
-							match cmd {
-								event::Cmd::CmdGet((ref cmd_get)) => {
-									fn_handle_get(cmd_get, &ctx);
-									continue 'loop_recv;
-								}
-								event::Cmd::CmdRun((ref cmd_run)) => {
-									let (tx_cancel, rx_cancel) = flume::bounded(1);
-									let mut recv_next: Option<(event::Cmd, event::Context)> = None;
-									std::thread::scope(|s| {
-										s.spawn(|| {
-											std::thread::Builder::new()
-												.stack_size(4 * 1024)
-												.spawn_scoped(s, || {
-													fn_handle_run(cmd_run, &ctx, rx_cancel);
-												})
-										});
-										s.spawn(|| {
-											loop {
-												let (cmd_next, ctx_next) = rx_worker.recv().unwrap();
-												match cmd_next {
-													event::Cmd::CmdGet((ref cmd_get)) => {
-														// while cmd_run is active, answer to simple cmd_get commands
-														fn_handle_get(cmd_get, &ctx_next);
-														continue;
-													}
-													_ => {
-														// got cmd_set/run, this terminates the active cmd_run command
-														recv_next = Some((cmd_next, ctx_next));
-														//tx_cancel.try_send(true);
-														drop(tx_cancel); //this is like close(channel) in go, multiple threads get the signal
-														break;
-													}
-												}
-											}
-										});
-									});
-									if let Some((cmd_next, ctx_next)) = recv_next {
-										cmd = cmd_next;
-										ctx = ctx_next;
-										continue 'loop_match;
-									}
-									continue 'loop_recv;
-								}
-							}
-						}
-					}
+				.spawn_scoped(s, || {
+					handler.handle_loop();
 				})
 				.unwrap();
 		});
