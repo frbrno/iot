@@ -45,10 +45,17 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	//defer conn.Close()
+	defer conn.Close()
 
 	peer := prot.NewPeer(conn, peer_name)
 	defer peer.Close()
+
+	peer.IsOnOfflineSigBlocking(true, time.Second*6)
+	if err != nil {
+		log.Fatal("timeout waiting for connect")
+	}
+
+	is_offline_sig := peer.IsOnOfflineSig(false)
 
 	t_begin := time.Now()
 	err = peer.Request().
@@ -60,5 +67,26 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Printf("success! elapsed: %s", time.Since(t_begin).String())
+	log.Printf("upload success! board reboots soon. elapsed: %s", time.Since(t_begin).String())
+	log.Printf("waiting for board info ...")
+	select {
+	case <-time.After(time.Second * 20):
+		peer.IsOnOfflineSigUnsubscribe(is_offline_sig)
+		log.Fatal("timeout waiting for disconnect")
+	case <-is_offline_sig:
+	}
+
+	peer.IsOnOfflineSigBlocking(true, time.Second*30)
+	if err != nil {
+		log.Fatal("timeout waiting for connect")
+	}
+	ack_result := struct {
+		BuildTime string `json:"build_time"`
+	}{}
+	_, err = peer.Request().SetAckResult(&ack_result).Get("info")
+	if err != nil {
+		log.Fatal("timeout waiting for info")
+	}
+	log.Println("board info:")
+	log.Printf("BuildTime: %v", ack_result.BuildTime)
 }

@@ -147,12 +147,14 @@ func (p *Peer) IsOnline() bool {
 	return p.is_online
 }
 
-// IsOnOfflineSig the returned channel fires if the peer come online/offline
+// IsOnOfflineSig the returned channel fires if the peer becomes online/offline
 // call unsubscribe if u ignore the signal
+// it is guaranteed to detect a disconnect,
+// since a changed p2p_token triggers disconnect
 func (p *Peer) IsOnOfflineSig(on_or_off bool) chan struct{} {
 	is_on_offline_sig := make(chan struct{})
 	p.mu.Lock()
-	if !p.is_online {
+	if on_or_off && p.is_online || !on_or_off && !p.is_online {
 		close(is_on_offline_sig)
 		p.mu.Unlock()
 		return is_on_offline_sig
@@ -160,6 +162,19 @@ func (p *Peer) IsOnOfflineSig(on_or_off bool) chan struct{} {
 	p.is_on_offline_sig_list[is_on_offline_sig] = on_or_off
 	p.mu.Unlock()
 	return is_on_offline_sig
+}
+
+func (p *Peer) IsOnOfflineSigBlocking(on_or_off bool, timeout time.Duration) error {
+	is_on_offline_sig := p.IsOnOfflineSig(on_or_off)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		p.IsOnOfflineSigUnsubscribe(is_on_offline_sig)
+		return ErrTimeout
+	case <-is_on_offline_sig:
+		return nil
+	}
 }
 
 func (p *Peer) IsOnOfflineSigUnsubscribe(is_on_offline_sig chan struct{}) {
