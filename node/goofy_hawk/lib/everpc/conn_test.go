@@ -1,4 +1,4 @@
-package prot
+package everpc
 
 import (
 	"fmt"
@@ -54,7 +54,7 @@ func TestRequest(t *testing.T) {
 	t.Log("success")
 }
 
-// go test -v -run=TestRunHandlerInfinite -timeout 10h lib/prot/*.go
+// go test -v -run=TestRunHandlerInfinite -timeout 10h lib/everpc/*.go
 func TestRequestInfinite(t *testing.T) {
 	conn, err := Connect(nats_url, name_self)
 	if err != nil {

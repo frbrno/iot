@@ -1,4 +1,4 @@
-package prot
+package everpc
 
 import (
 	"encoding/json"
