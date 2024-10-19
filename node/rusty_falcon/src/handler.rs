@@ -210,74 +210,79 @@ impl Handler {
 		)));
 	}
 
+	fn handle_get(&self, cmd_get: &event::CmdGet, ctx: &event::Context) {
+		match cmd_get {
+			event::CmdGet::Stepper1State() => {
+				let guard = self.stepper1.lock().unwrap();
+				let mut direction = "";
+				match guard.direction {
+					uln2003::Direction::Normal => direction = "left",
+					uln2003::Direction::Reverse => direction = "right",
+				}
+				let mut data = event::ReplyData::Stepper1State {
+					position_current: guard.position_current,
+					direction: direction.to_string(),
+				};
+				drop(guard);
+
+				self.tx_event.send(event::reply_ack(Some(data), ctx));
+			}
+			event::CmdGet::P2PToken() => {
+				let guard = self.p2p_token.lock().unwrap();
+				let token = *guard;
+				drop(guard);
+
+				let data = event::ReplyData::P2PToken { p2p_token: token };
+				self.tx_event.send(event::reply_ack(Some(data), ctx));
+			}
+		}
+	}
+
+	fn handle_run(
+		&mut self,
+		cmd_run: &event::CmdRun,
+		ctx: &event::Context,
+		rx_cancel: flume::Receiver<bool>,
+	) {
+		match cmd_run {
+			event::CmdRun::P2PInit { ref data } => {
+				self.run_p2p_init(data, ctx, rx_cancel);
+			}
+			event::CmdRun::UpdateBoard { ref data } => {
+				self.run_update_board(data, ctx, rx_cancel);
+			}
+			event::CmdRun::Stepper1MoveTo { ref data } => {
+				self.run_stepper1_move_to(data, ctx, rx_cancel);
+			}
+			event::CmdRun::Stepper1SpeedLeft { ref data } => {
+				self.run_stepper1_speed(data, ctx, uln2003::Direction::Normal, rx_cancel);
+			}
+			event::CmdRun::Stepper1SpeedRight { ref data } => {
+				self.run_stepper1_speed(data, ctx, uln2003::Direction::Reverse, rx_cancel);
+			}
+			event::CmdRun::Stop() => {
+				self.run_stop(ctx, rx_cancel);
+			}
+			_ => self
+				.tx_event
+				.send(event::reply_error(
+					String::from("fn_handle_run err: no handler impl"),
+					ctx,
+				))
+				.unwrap(),
+		}
+	}
+
 	pub fn handle_loop(&mut self) {
-		let mut fn_handle_get = {
-			let mut this = self.clone();
-			move |cmd_get: &event::CmdGet, ctx: &event::Context| match cmd_get {
-				event::CmdGet::Stepper1State() => {
-					let guard = this.stepper1.lock().unwrap();
-					let mut direction = "";
-					match guard.direction {
-						uln2003::Direction::Normal => direction = "left",
-						uln2003::Direction::Reverse => direction = "right",
-					}
-					let mut data = event::ReplyData::Stepper1State {
-						position_current: guard.position_current,
-						direction: direction.to_string(),
-					};
-					drop(guard);
+		let mut self_a = self.clone();
+		let mut self_b = self.clone();
 
-					this.tx_event.send(event::reply_ack(Some(data), ctx));
-				}
-				event::CmdGet::P2PToken() => {
-					let guard = this.p2p_token.lock().unwrap();
-					let token = *guard;
-					drop(guard);
-
-					let data = event::ReplyData::P2PToken { p2p_token: token };
-					this.tx_event.send(event::reply_ack(Some(data), ctx));
-				}
-			}
-		};
-
-		let mut fn_handle_run = {
-			let mut this = self.clone();
-			move |cmd_run: &event::CmdRun, ctx: &event::Context, rx_cancel: flume::Receiver<bool>| {
-				match cmd_run {
-					event::CmdRun::P2PInit { ref data } => {
-						this.run_p2p_init(data, ctx, rx_cancel);
-					}
-					event::CmdRun::UpdateBoard { ref data } => {
-						this.run_update_board(data, ctx, rx_cancel);
-					}
-					event::CmdRun::Stepper1MoveTo { ref data } => {
-						this.run_stepper1_move_to(data, ctx, rx_cancel);
-					}
-					event::CmdRun::Stepper1SpeedLeft { ref data } => {
-						this.run_stepper1_speed(data, ctx, uln2003::Direction::Normal, rx_cancel);
-					}
-					event::CmdRun::Stepper1SpeedRight { ref data } => {
-						this.run_stepper1_speed(data, ctx, uln2003::Direction::Reverse, rx_cancel);
-					}
-					event::CmdRun::Stop() => {
-						this.run_stop(ctx, rx_cancel);
-					}
-					_ => this
-						.tx_event
-						.send(event::reply_error(
-							String::from("fn_handle_run err: no handler impl"),
-							ctx,
-						))
-						.unwrap(),
-				}
-			}
-		};
 		'loop_recv: loop {
 			let (mut cmd, mut ctx) = self.rx_event.recv().unwrap();
 			'loop_match: loop {
 				match cmd {
 					event::Cmd::CmdGet((ref cmd_get)) => {
-						fn_handle_get(cmd_get, &ctx);
+						self.handle_get(cmd_get, &ctx);
 						continue 'loop_recv;
 					}
 					event::Cmd::CmdRun((ref cmd_run)) => {
@@ -288,16 +293,16 @@ impl Handler {
 								std::thread::Builder::new()
 									.stack_size(4 * 1024)
 									.spawn_scoped(s, || {
-										fn_handle_run(cmd_run, &ctx, rx_cancel);
+										self_a.handle_run(cmd_run, &ctx, rx_cancel);
 									})
 							});
 							s.spawn(|| {
 								loop {
-									let (cmd_next, ctx_next) = self.rx_event.recv().unwrap();
+									let (cmd_next, ctx_next) = self_b.rx_event.recv().unwrap();
 									match cmd_next {
 										event::Cmd::CmdGet((ref cmd_get)) => {
 											// while cmd_run is active, answer to simple cmd_get commands
-											fn_handle_get(cmd_get, &ctx_next);
+											self_b.handle_get(cmd_get, &ctx_next);
 											continue;
 										}
 										_ => {
