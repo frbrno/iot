@@ -135,6 +135,10 @@ type Conn struct {
 	state_sig_list map[chan struct{}]bool
 }
 
+func (c *Conn) JetStream() jetstream.JetStream {
+	return c.js
+}
+
 func (c *Conn) StateUp() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
