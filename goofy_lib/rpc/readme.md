@@ -1,10 +1,10 @@
 # rpc
 
-nats.Conn wrapper for request reply support for mqtt nodes and jetstream message persistent
+A nats.Conn wrapper providing request-reply support for MQTT nodes, with nats.io JetStream-based message persistence.
 
 #### protocol scheme
 
-message layout:  
+nats subject layout:  
 `iot.{dst}.{direction rx/tx}.{src}.{method}.{status}.{resource}.{token}`
 
 method get/set:  
@@ -18,9 +18,9 @@ node answer 2->`iot.rusty_falcon.tx.goofy_hawk.run.[done,error,cancel].update_bo
 
 *rusty_falcon is the node, goofy_hawk the client
 
-The node is only able to process one 'run' method at a time.  
-Sending a new 'run' method while one is active, 
-results in the node sending a cancel message and starts the new 'run' method.
+The node can only process one 'run' method at a time.<br>
+If a new 'run' method is received while another is active,<br>
+the node will send a cancel message for the current operation before starting the new 'run' method.
 
 example:  
 client sends->`iot.rusty_falcon.rx.goofy_hawk.run.exec.stepper1_move_to.1000`  

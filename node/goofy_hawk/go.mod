@@ -1,9 +1,12 @@
 module github.com/frbrno/iot/node/goofy_hawk
 
-go 1.23
+go 1.23.1
+
+replace github.com/frbrno/iot/goofy_lib/rpc => ../../goofy_lib/rpc
 
 require (
 	github.com/a-h/templ v0.2.778
+	github.com/frbrno/iot/goofy_lib/rpc v0.0.0-00010101000000-000000000000
 	github.com/gofiber/fiber/v3 v3.0.0-beta.3
 	github.com/nats-io/nats.go v1.37.0
 	github.com/valyala/fasthttp v1.55.0
@@ -22,4 +25,5 @@ require (
 	github.com/valyala/tcplisten v1.0.0 // indirect
 	golang.org/x/crypto v0.27.0 // indirect
 	golang.org/x/sys v0.25.0 // indirect
+	golang.org/x/text v0.18.0 // indirect
 )
