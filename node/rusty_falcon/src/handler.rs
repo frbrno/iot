@@ -228,12 +228,12 @@ impl Handler {
 
 				self.tx_event.send(event::reply_ack(Some(data), ctx));
 			}
-			event::CmdGet::P2PToken() => {
+			event::CmdGet::Watchdog() => {
 				let guard = self.p2p_token.lock().unwrap();
 				let token = *guard;
 				drop(guard);
 
-				let data = event::ReplyData::P2PToken { p2p_token: token };
+				let data = event::ReplyData::Watchdog { p2p_token: token };
 				self.tx_event.send(event::reply_ack(Some(data), ctx));
 			}
 			event::CmdGet::Info() => {

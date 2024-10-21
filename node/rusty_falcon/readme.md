@@ -13,6 +13,7 @@ links:
 - https://github.com/esp-rs/awesome-esp-rust
 - https://github.com/esp-rs/espup
 - https://docs.espressif.com/projects/esp-idf/en/stable/esp32/get-started/linux-macos-setup.html
+- https://github.com/johnthagen/min-sized-rust
 
 #### partitions
 - need create a partitions.bin from csv file:  
