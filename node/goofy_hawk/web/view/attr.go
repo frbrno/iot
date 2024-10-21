@@ -14,6 +14,11 @@ func AttrFunc(fn func(a Attr)) templ.Attributes {
 
 type Attr map[string]any
 
+func (a Attr) Func(fn func(a Attr)) templ.Attributes {
+	fn(a)
+	return templ.Attributes(a)
+}
+
 func (a Attr) HxGet(s string) Attr {
 	a["hx-get"] = s
 	return a
