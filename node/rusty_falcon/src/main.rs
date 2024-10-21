@@ -67,7 +67,7 @@ const PASSWORD: &str = env!("WIFI_PASS");
 pub const BUILD_TIME: &str = include!(concat!(env!("OUT_DIR"), "/timestamp.txt"));
 const MQTT_URL: &str = "mqtt://192.168.10.124:1880";
 const MQTT_CLIENT_ID: &str = "rusty_falcon";
-const MQTT_TOPIC: &str = "+/rusty_falcon/+/+/+";
+const MQTT_TOPIC: &str = "iot/rusty_falcon/rx/+/+/exec/+/+";
 // {src}.{dst}.stepper1_speed.{get,set,run}.{token}
 // {src}.{dst}.stepper1_speed.{ack,cancel,done,error}.{token}
 
@@ -200,7 +200,7 @@ fn main() {
 				break;
 			}
 			client.publish(
-				format!("rusty_falcon/hello/iamalive").as_str(),
+				format!("iot/rusty_falcon/tx/broadcast/event/exec/iamalive/0").as_str(),
 				QoS::AtMostOnce,
 				false,
 				&[0],

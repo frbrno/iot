@@ -10,15 +10,17 @@ use serde::{
 // just cmds right now
 pub fn from_mqtt(topic: &str, data: &[u8]) -> Result<(Cmd, Context)> {
 	let parts: Vec<&str> = topic.split('/').collect();
-	if parts.len() != 5 {
+	if parts.len() != 8 {
 		return Err(anyhow!("unknown topic {:?}", topic));
 	}
+	//iot.rusty_falcon.rx.goofy_hawk.run.exec.stepper1.1010
 	let ctx = Context {
-		src: parts[0].to_string(),
 		dst: parts[1].to_string(),
-		event: parts[2].to_string(),
-		event_typ: parts[3].to_string(),
-		token: parts[4].to_string(),
+		src: parts[3].to_string(),
+		method: parts[4].to_string(),
+		status: parts[5].to_string(),
+		cmd: parts[6].to_string(),
+		token: parts[7].to_string(),
 	};
 
 	// println!(
@@ -26,9 +28,9 @@ pub fn from_mqtt(topic: &str, data: &[u8]) -> Result<(Cmd, Context)> {
 	// 	ctx.src, ctx.dst, ctx.event, ctx.event_typ, ctx.token
 	// );
 
-	match (ctx.event_typ.as_str(), ctx.event.as_str()) {
+	match (ctx.method.as_str(), ctx.cmd.as_str()) {
 		("get", "stepper1_state") => Ok((Cmd::CmdGet(CmdGet::Stepper1State()), ctx)),
-		("get", "p2p_token") => Ok((Cmd::CmdGet(CmdGet::P2PToken()), ctx)),
+		("get", "watchdog") => Ok((Cmd::CmdGet(CmdGet::Watchdog()), ctx)),
 		("get", "info") => Ok((Cmd::CmdGet(CmdGet::Info()), ctx)),
 		("run", "p2p_init") => Ok((
 			Cmd::CmdRun(CmdRun::P2PInit {
@@ -68,19 +70,20 @@ pub fn from_mqtt(topic: &str, data: &[u8]) -> Result<(Cmd, Context)> {
 			ctx,
 		)),
 		_ => Err(anyhow!(
-			"unknown command. event: {:?}, event_typ: {:?}",
-			ctx.event,
-			ctx.event_typ
+			"unknown command. method: {:?}, cmd: {:?}",
+			ctx.method,
+			ctx.cmd
 		)),
 	}
 }
 
 #[derive(Clone)]
 pub struct Context {
-	pub src: String,
 	pub dst: String,
-	pub event: String,
-	pub event_typ: String,
+	pub src: String,
+	pub method: String,
+	pub status: String,
+	pub cmd: String,
 	pub token: String,
 }
 pub enum Event {
@@ -127,7 +130,7 @@ pub enum CmdRun {
 
 pub enum CmdGet {
 	Stepper1State(),
-	P2PToken(),
+	Watchdog(),
 	Info(),
 }
 
@@ -151,17 +154,30 @@ impl CmdReply {
 	}
 	pub fn topic(&self, ctx: &Context) -> String {
 		match self {
+			//iot.rusty_falcon.tx.goofy_hawk.run.exec.stepper1.1010
 			CmdReply::Ack { .. } => {
-				format!("{}/{}/{}/ack/{}", ctx.dst, ctx.src, ctx.event, ctx.token)
+				format!(
+					"iot/{}/tx/{}/{}/ack/{}/{}",
+					ctx.dst, ctx.src, ctx.method, ctx.cmd, ctx.token
+				)
 			}
 			CmdReply::Done { .. } => {
-				format!("{}/{}/{}/done/{}", ctx.dst, ctx.src, ctx.event, ctx.token)
+				format!(
+					"iot/{}/tx/{}/{}/done/{}/{}",
+					ctx.dst, ctx.src, ctx.method, ctx.cmd, ctx.token
+				)
 			}
 			CmdReply::Cancel() => {
-				format!("{}/{}/{}/cancel/{}", ctx.dst, ctx.src, ctx.event, ctx.token)
+				format!(
+					"iot/{}/tx/{}/{}/cancel/{}/{}",
+					ctx.dst, ctx.src, ctx.method, ctx.cmd, ctx.token
+				)
 			}
 			CmdReply::Error { .. } => {
-				format!("{}/{}/{}/error/{}", ctx.dst, ctx.src, ctx.event, ctx.token)
+				format!(
+					"iot/{}/tx/{}/{}/error/{}/{}",
+					ctx.dst, ctx.src, ctx.method, ctx.cmd, ctx.token
+				)
 			}
 		}
 	}
@@ -177,7 +193,7 @@ pub enum ReplyData {
 		position_current: usize,
 		direction: String,
 	},
-	P2PToken {
+	Watchdog {
 		p2p_token: i64,
 	},
 	Info {
