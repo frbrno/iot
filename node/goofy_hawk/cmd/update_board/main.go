@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/frbrno/iot/node/goofy_hawk/lib/rpc"
+	"github.com/frbrno/iot/goofy_lib/rpc"
 	"github.com/gofiber/fiber/v3"
 	"github.com/nats-io/nats.go"
 )
