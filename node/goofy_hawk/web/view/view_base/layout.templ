@@ -83,7 +83,7 @@ templ navbar(v *view.Vars, oob bool) {
 				<div class="navbar-start">
 					<a
 						{ view.AttrFunc(func(a view.Attr) {
-							a.HxGet("/control")
+							a.HxGet("/rusty_falcon")
 							a.HxTarget(HxTarget)
 							a.HxPushUrl(true)
 							a.Class("navbar-item")
@@ -91,7 +91,7 @@ templ navbar(v *view.Vars, oob bool) {
 								a.Class("is-active")
 							}
 						})... }
-					>Control</a>
+					>rusty_falcon</a>
 				</div>
 				<div class="navbar-end">
 					<div class="navbar-item">

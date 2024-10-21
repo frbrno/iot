@@ -1,0 +1,35 @@
+package view_base_rustyfalcon
+
+import (
+	"github.com/frbrno/iot/node/goofy_hawk/web/view"
+	"github.com/frbrno/iot/node/goofy_hawk/web/view/view_base"
+)
+
+const HxTarget = "view_base_rustyfalcon"
+
+templ Index() {
+	<h3 class="title">Hello { HxTarget }</h3>
+	// <div class="buttons">
+	// 	<button class="button is-info">Info</button>
+	// 	<button class="button is-success">Success</button>
+	// 	<button class="button is-warning">Warning</button>
+	// 	<button
+	// 		{ view.Attr{}.Func(func(a view.Attr) {
+	// 				a.HxPost("/api/node/rusty_falcon/update_board")
+	// 				a.Class("button", "is-danger")			
+	// 		})... }
+	// 	>Update</button>
+	// </div>
+	<div hx-ext="sse" sse-connect="/sse?subs=a;b;c;*.*.comecommand.>;">
+		<span>events:</span>
+		<div sse-swap="rusty_falcon_all" hx-swap="afterbegin"></div>
+	</div>
+}
+
+templ Layout(v *view.Vars, comp templ.Component) {
+	@view_base.Layout(v, layout(comp))
+}
+
+templ layout(comp templ.Component) {
+	@comp
+}

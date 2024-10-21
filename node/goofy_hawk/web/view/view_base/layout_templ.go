@@ -194,7 +194,7 @@ func navbar(v *view.Vars, oob bool) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		templ_7745c5c3_Err = templ.RenderAttributes(ctx, templ_7745c5c3_Buffer, view.AttrFunc(func(a view.Attr) {
-			a.HxGet("/control")
+			a.HxGet("/rusty_falcon")
 			a.HxTarget(HxTarget)
 			a.HxPushUrl(true)
 			a.Class("navbar-item")
@@ -205,7 +205,7 @@ func navbar(v *view.Vars, oob bool) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(">Control</a></div><div class=\"navbar-end\"><div class=\"navbar-item\"><div class=\"buttons\"><form action=\"/logout\" method=\"post\"><div class=\"field\"><button type=\"submit\" class=\"button is-danger\">logout</button></div></form></div></div></div></div></div></nav>")
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(">rusty_falcon</a></div><div class=\"navbar-end\"><div class=\"navbar-item\"><div class=\"buttons\"><form action=\"/logout\" method=\"post\"><div class=\"field\"><button type=\"submit\" class=\"button is-danger\">logout</button></div></form></div></div></div></div></div></nav>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
