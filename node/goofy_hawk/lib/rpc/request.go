@@ -1,4 +1,4 @@
-package everpc
+package rpc
 
 import (
 	"encoding/json"
@@ -13,9 +13,9 @@ import (
 
 // Run helps to write less code, returns nil on success/done.
 // note: if u provide a 'done_sig' channel, it is not blocking
-func (r *Request) Run(event_name string) error {
+func (r *Request) Run(resource string) error {
 
-	fn_cancel, event_sig, err := r.request(EventTyp_Run, event_name, r.payload)
+	fn_cancel, event_sig, err := r.request(EventMethod_Run, resource, r.payload)
 	if err != nil {
 		return err
 	}
@@ -27,7 +27,7 @@ func (r *Request) Run(event_name string) error {
 		if event.Error != nil {
 			return event.Error
 		}
-		if event.Typ != EventTyp_Ack {
+		if event.Status != EventStatus_Ack {
 			return ErrProtocol
 		}
 	}
@@ -42,12 +42,12 @@ func (r *Request) Run(event_name string) error {
 		case <-timeout.C:
 			return ErrTimeout
 		case event := <-event_sig:
-			switch event.Typ {
-			case EventTyp_Done:
+			switch event.Status {
+			case EventStatus_Done:
 				return nil
-			case EventTyp_Cancel:
+			case EventStatus_Cancel:
 				return ErrCanceled
-			case EventTyp_Error:
+			case EventStatus_Error:
 				return event.Error
 			default:
 				return ErrProtocol
@@ -64,9 +64,9 @@ func (r *Request) Run(event_name string) error {
 	return fn_recv()
 }
 
-func (r *Request) Get(event_name string) (*Event, error) {
+func (r *Request) Get(resource string) (*Event, error) {
 
-	fn_cancel, event_sig, err := r.request(EventTyp_Get, event_name, r.payload)
+	fn_cancel, event_sig, err := r.request(EventMethod_Get, resource, r.payload)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func (r *Request) Get(event_name string) (*Event, error) {
 		if event.Error != nil {
 			return nil, event.Error
 		}
-		if event.Typ != EventTyp_Ack {
+		if event.Status != EventStatus_Ack {
 			return nil, ErrProtocol
 		}
 		return event, nil
@@ -87,7 +87,7 @@ func (r *Request) Get(event_name string) (*Event, error) {
 }
 
 type Request struct {
-	peer         *Peer
+	c            *Conn
 	ack_timeout  time.Duration
 	timeout_done time.Duration
 	payload      []byte
@@ -137,48 +137,47 @@ func (r *Request) setIgnoreOffline() *Request {
 	return r
 }
 
-func (r *Request) request(event_typ EventTyp, event_name string, payload []byte) (func(), <-chan *Event, error) {
+func (r *Request) request(method string, resource string, payload []byte) (func(), <-chan *Event, error) {
 
-	r.peer.conn.mu.Lock()
+	r.c.mu.Lock()
 
 	if !r.ignore_offline {
-		if !r.peer.is_online {
-			r.peer.conn.mu.Unlock()
+		if !r.c.is_state_up {
+			r.c.mu.Unlock()
 			return nil, nil, ErrDisconnected
 		}
 	}
 
-	if r.peer.is_closed {
-		r.peer.conn.mu.Unlock()
+	if r.c.is_closed {
+		r.c.mu.Unlock()
 		return nil, nil, ErrDisconnected
 	}
 
-	var is_offline_sig chan struct{}
+	var state_sig chan struct{}
 	if r.ignore_offline {
-		is_offline_sig = make(chan struct{})
+		state_sig = make(chan struct{})
 	} else {
-		r.peer.is_on_offline_sig_list[is_offline_sig] = false
+		r.c.state_sig_list[state_sig] = false
 	}
 
-	token := r.peer.conn.token
-	r.peer.conn.token++
-	r.peer.conn.mu.Unlock()
+	token := r.c.token
+	r.c.token++
+	r.c.mu.Unlock()
 
 	msg_nats_sig := make(chan *nats.Msg, 10)
 
-	sub_subject := fmt.Sprintf("%s.%s.%s.%s.%v", r.peer.name, r.peer.conn.name_self, event_name, EventTyp_All, token)
-	sub, err := r.peer.conn.nc.ChanSubscribe(sub_subject, msg_nats_sig)
+	sub_subject := fmt.Sprintf("iot.%s.tx.%s.%s.%s.%s.%v", r.c.name_node, r.c.name_self, method, EventStatus_All, resource, token)
+	sub, err := r.c.nc.ChanSubscribe(sub_subject, msg_nats_sig)
 	if err != nil {
 		return nil, nil, errors.Join(ErrProtocol, err)
 	}
 
-	pub_subject := fmt.Sprintf("%s.%s.%s.%s.%v", r.peer.conn.name_self, r.peer.name, event_name, event_typ, token)
-	err = r.peer.conn.nc.Publish(pub_subject, payload)
+	pub_subject := fmt.Sprintf("iot.%s.rx.%s.%s.%s.%s.%v", r.c.name_node, r.c.name_self, method, EventStatus_Exec, resource, token)
+	err = r.c.nc.Publish(pub_subject, payload)
 	if err != nil {
 		sub.Unsubscribe()
 		return nil, nil, errors.Join(ErrProtocol, err)
 	}
-
 	unsubscribe_sig := make(chan struct{})
 	unsubscribe_done_sig := make(chan struct{})
 	event_sig := make(chan *Event, 10)
@@ -188,73 +187,64 @@ func (r *Request) request(event_typ EventTyp, event_name string, payload []byte)
 		defer sub.Unsubscribe()
 
 		for {
+			ev := &Event{
+				Msg:      nil,
+				Dst:      r.c.name_node,
+				Src:      r.c.name_self,
+				Method:   method,
+				Status:   "",
+				Resource: resource,
+				Token:    token,
+				Error:    nil,
+			}
 			select {
-			case <-is_offline_sig: //whatchdog 'p2p_token.get' gets no response
-				event_sig <- &Event{
-					Typ:   EventTyp_Internal,
-					Error: errors.Join(ErrDisconnected, errors.New("is_offline_sig")),
-				}
-				return
+			case <-state_sig: //whatchdog 'p2p_token.get' gets no response
+				ev.Status = EventStatus_Internal
+				ev.Error = errors.Join(ErrDisconnected, errors.New("state_sig"))
 			case <-unsubscribe_sig:
-				event_sig <- &Event{
-					Typ:   EventTyp_Internal,
-					Error: errors.Join(ErrCanceled, errors.New("unsubscribe_sig")),
-				}
-				return
-			case <-r.peer.is_close_sig: // peer.Close() call
-				event_sig <- &Event{
-					Typ:   EventTyp_Internal,
-					Error: errors.Join(ErrDisconnected, errors.New("is_close_sig")),
-				}
-				return
+				ev.Status = EventStatus_Internal
+				ev.Error = errors.Join(ErrDisconnected, errors.New("unsubscribe_sig"))
+			case <-r.c.closed_sig: // c.Close() call
+				ev.Status = EventStatus_Internal
+				ev.Error = errors.Join(ErrDisconnected, errors.New("closed_sig"))
 			case <-r.cancel_sig: // caller provided cancel channel
-				event_sig <- &Event{
-					Typ:   EventTyp_Internal,
-					Error: errors.Join(ErrCanceled, errors.New("cancel_sig")),
-				}
-				return
+				ev.Status = EventStatus_Internal
+				ev.Error = errors.Join(ErrDisconnected, errors.New("cancel_sig"))
 			case msg_nats := <-msg_nats_sig:
 				spl := strings.Split(msg_nats.Subject, ".")
-				event := &Event{
-					Msg:      msg_nats,
-					Typ:      EventTyp(spl[3]), // na, dont need check slice boundaries; It is also guaranteed the name_peer only sends valid EventTyp's
-					Name:     event_name,
-					PeerName: r.peer.name,
-				}
-				switch event.Typ {
-				case EventTyp_Cancel:
-					event.Error = ErrCanceled
-				case EventTyp_Error:
+				ev.Msg = msg_nats
+				ev.Status = spl[5]
+
+				switch ev.Status {
+				case EventStatus_Cancel:
+					ev.Error = ErrCanceled
+				case EventStatus_Error:
 					data := struct {
 						Message string `json:"message"`
 					}{}
 					json.Unmarshal(msg_nats.Data, &data)
-					event.Error = errors.Join(ErrPeer, errors.New("message: "+data.Message))
-				case EventTyp_Done:
+					ev.Error = errors.Join(ErrNode, errors.New("message: "+data.Message))
+				case EventStatus_Done:
 					if r.done_result != nil {
-						err := json.Unmarshal(event.Data, r.done_result)
+						err := json.Unmarshal(ev.Data, r.done_result)
 						if err != nil {
-							event_sig <- &Event{
-								Typ:   EventTyp_Internal,
-								Error: errors.Join(ErrProtocol, err),
-							}
-							return
+							ev.Status = EventStatus_Internal
+							ev.Error = errors.Join(ErrProtocol, err)
 						}
 					}
-				case EventTyp_Ack:
+				case EventStatus_Ack:
 					if r.result_ack != nil {
-						err := json.Unmarshal(event.Data, r.result_ack)
+						err := json.Unmarshal(ev.Data, r.result_ack)
 						if err != nil {
-							event_sig <- &Event{
-								Typ:   EventTyp_Internal,
-								Error: errors.Join(ErrProtocol, err),
-							}
-							return
+							ev.Status = EventStatus_Internal
+							ev.Error = errors.Join(ErrProtocol, err)
 						}
 					}
 				}
-
-				event_sig <- event
+			}
+			event_sig <- ev
+			if ev.Error != nil {
+				return
 			}
 		}
 	}()
@@ -266,7 +256,7 @@ func (r *Request) request(event_typ EventTyp, event_name string, payload []byte)
 			close(unsubscribe_sig)
 			<-unsubscribe_done_sig
 			close(event_sig)
-			r.peer.IsOnOfflineSigUnsubscribe(is_offline_sig)
+			r.c.StateSigUnsubscribe(state_sig)
 
 			// TODO: close msg_nats_sig?
 			// I think yes, the caller should be aware of it because he is the one calling unsubscribe
