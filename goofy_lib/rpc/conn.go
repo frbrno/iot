@@ -97,20 +97,20 @@ func Dial(nc *nats.Conn, name_self, name_node string) (*Conn, error) {
 				}
 
 				if !success {
-					for is_offline_sig, online := range c.state_sig_list {
-						if !online {
-							close(is_offline_sig)
-							delete(c.state_sig_list, is_offline_sig)
-						}
-					}
-
 					c.mu.Lock()
 					if c.is_closed {
 						c.mu.Unlock()
 						return
 					}
+
 					c.is_state_up = false
 					c.p2p_token = 0
+					for state_sig, online := range c.state_sig_list {
+						if !online {
+							close(state_sig)
+							delete(c.state_sig_list, state_sig)
+						}
+					}
 					c.mu.Unlock()
 					break
 				}
@@ -194,12 +194,12 @@ func (c *Conn) Close() {
 	c.is_closed = true
 	c.is_state_up = false
 	close(c.closed_sig)
-	for is_offline_sig, online := range c.state_sig_list {
+	for state_sig, online := range c.state_sig_list {
 		if !online {
-			close(is_offline_sig)
+			close(state_sig)
 		}
 		//here delete all online and offline references to the channels
-		delete(c.state_sig_list, is_offline_sig)
+		delete(c.state_sig_list, state_sig)
 	}
 	c.mu.Unlock()
 }
