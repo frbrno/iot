@@ -22,7 +22,7 @@ func main() {
 		StreamRequestBody: true,
 	})
 
-	app.Get("/static*", static.New("", static.Config{
+	app.Get("/assets*", static.New("", static.Config{
 		FS:       static_dir_stripped(),
 		Browse:   true,
 		Compress: true,
@@ -56,11 +56,11 @@ func main() {
 	log.Fatal(app.Listen(":3000", fiber.ListenConfig{DisableStartupMessage: true}))
 }
 
-//go:embed web/static
+//go:embed web/assets
 var static_dir embed.FS
 
 func static_dir_stripped() fs.FS {
-	static_dir_stripped, err := fs.Sub(static_dir, "web/static")
+	static_dir_stripped, err := fs.Sub(static_dir, "web/assets")
 	if err != nil {
 		log.Fatal(err)
 	}

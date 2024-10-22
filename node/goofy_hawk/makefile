@@ -9,13 +9,13 @@ setup_web:
 # create tmp folder
 	mkdir -p tmp
 # create web folder
-	mkdir -p web/static
+	mkdir -p web/assets/vendor/
 # get bulma css
-	curl -o web/static/bulma.min.css https://cdn.jsdelivr.net/npm/bulma@1.0.2/css/bulma.min.css
+	curl -o web/assets/vendor/bulma.min.css https://cdn.jsdelivr.net/npm/bulma@1.0.2/css/bulma.min.css
 # get htmx.js
-	curl -o web/static/htmx.min.js https://unpkg.com/htmx.org@2.0.3/dist/htmx.min.js
+	curl -o web/assets/vendor/htmx.min.js https://unpkg.com/htmx.org@2.0.3/dist/htmx.min.js
 # get htmx sse plugin
-	curl -o web/static/htmx_sse.min.js https://unpkg.com/htmx-ext-sse@2.2.2/sse.js
+	curl -o web/assets/vendor/htmx-ext-sse.js https://unpkg.com/htmx-ext-sse@2.2.2/sse.js
 # get fontawesome
 	rm -rf tmp/fontawesome
 	git clone -n --depth=1 --branch "6.6.0" --filter=tree:0 \
@@ -23,9 +23,9 @@ setup_web:
 	cd tmp/fontawesome; \
 	git sparse-checkout set --no-cone "css" "webfonts"; \
 	git checkout;
-	mkdir -p web/static/fontawesome
-	cp -r tmp/fontawesome/css web/static/fontawesome/css
-	cp -r tmp/fontawesome/webfonts web/static/fontawesome/webfonts
+	mkdir -p web/assets/vendor/fontawesome
+	cp -r tmp/fontawesome/css web/assets/vendor/fontawesome/css
+	cp -r tmp/fontawesome/webfonts web/assets/vendor/fontawesome/webfonts
 
 install_update_board:
 	go install github.com/frbrno/iot/node/goofy_hawk/cmd/update_board

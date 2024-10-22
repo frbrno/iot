@@ -24,11 +24,11 @@ templ layout(v *view.Vars, comp templ.Component) {
 				<meta http-equiv="X-UA-Compatible" content="IE=edge"/>
 				<meta name="viewport" content="width=device-width, initial-scale=1"/>
 				<title>{ v.Title }</title>
-				<link rel="stylesheet" href="/static/bulma.min.css"/>
-				<link rel="stylesheet" href="/static/fontawesome/css/fontawesome.css"/>
-				<link rel="stylesheet" href="/static/fontawesome/css/brands.css"/>
-				<link rel="stylesheet" href="/static/fontawesome/css/solid.css"/>
-				// <link rel="stylesheet" href="/static/my.css"/>
+				<link rel="stylesheet" href="/assets/vendor/bulma.min.css"/>
+				<link rel="stylesheet" href="/assets/vendor/fontawesome/css/fontawesome.css"/>
+				<link rel="stylesheet" href="/assets/vendor/fontawesome/css/brands.css"/>
+				<link rel="stylesheet" href="/assets/vendor/fontawesome/css/solid.css"/>
+				// <link rel="stylesheet" href="/assets/my.css"/>
 			</head>
 			<body class="has-navbar-fixed-top">
 				@navbar(v, false)
@@ -40,8 +40,8 @@ templ layout(v *view.Vars, comp templ.Component) {
 				>
 					@comp
 				</section>
-				<script src="/static/htmx.min.js"></script>
-				<script src="/static/htmx_sse.min.js"></script>
+				<script src="/assets/vendor/htmx.min.js"></script>
+				<script src="/assets/vendor/htmx-ext-sse.js"></script>
 			</body>
 		</html>
 	}

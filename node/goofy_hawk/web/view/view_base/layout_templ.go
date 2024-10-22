@@ -109,7 +109,7 @@ func layout(v *view.Vars, comp templ.Component) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("</title><link rel=\"stylesheet\" href=\"/static/bulma.min.css\"><link rel=\"stylesheet\" href=\"/static/fontawesome/css/fontawesome.css\"><link rel=\"stylesheet\" href=\"/static/fontawesome/css/brands.css\"><link rel=\"stylesheet\" href=\"/static/fontawesome/css/solid.css\"></head><body class=\"has-navbar-fixed-top\">")
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("</title><link rel=\"stylesheet\" href=\"/assets/vendor/bulma.min.css\"><link rel=\"stylesheet\" href=\"/assets/vendor/fontawesome/css/fontawesome.css\"><link rel=\"stylesheet\" href=\"/assets/vendor/fontawesome/css/brands.css\"><link rel=\"stylesheet\" href=\"/assets/vendor/fontawesome/css/solid.css\"></head><body class=\"has-navbar-fixed-top\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -136,7 +136,7 @@ func layout(v *view.Vars, comp templ.Component) templ.Component {
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("</section><script src=\"/static/htmx.min.js\"></script><script src=\"/static/htmx_sse.min.js\"></script></body></html>")
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString("</section><script src=\"/assets/vendor/htmx.min.js\"></script><script src=\"/assets/vendor/htmx-ext-sse.js\"></script></body></html>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
