@@ -1,0 +1,8 @@
+imports_granularity = "Crate"
+group_imports = "One"
+imports_layout = "Vertical"
+max_width = 100
+hard_tabs = true
+tab_spaces = 1
+style_edition = "2024"
+newline_style = "Unix"

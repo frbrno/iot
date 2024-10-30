@@ -1,0 +1,115 @@
+
+package view
+
+import "github.com/frbrno/iot/lib/go/tempil"
+
+const HxTarget = "view"
+
+templ Layout(vars *tempil.Vars, comp templ.Component) {
+	@layout(vars, comp)
+}
+
+templ layout(vars *tempil.Vars, comp templ.Component) {
+	if vars.HxTargetHasPrefix(HxTarget) {
+		@comp
+		if vars.HxTargetEquals(HxTarget) {
+			@navbar(vars, true)
+		}
+		<title hx-swap-oob="true">{ vars.Title }</title>
+	} else {
+		<!DOCTYPE html>
+		<html lang="en">
+			<head>
+				<meta charset="utf-8"/>
+				<meta http-equiv="X-UA-Compatible" content="IE=edge"/>
+				<meta name="viewport" content="width=device-width, initial-scale=1"/>
+				<title>{ vars.Title }</title>
+				<link rel="stylesheet" href="/assets/vendor/bulma.min.css"/>
+				<link rel="stylesheet" href="/assets/vendor/fontawesome/css/fontawesome.css"/>
+				<link rel="stylesheet" href="/assets/vendor/fontawesome/css/brands.css"/>
+				<link rel="stylesheet" href="/assets/vendor/fontawesome/css/solid.css"/>
+				// <link rel="stylesheet" href="/assets/my.css"/>
+				<script src="/assets/vendor/htmx.min.js"></script>
+				<script src="/assets/vendor/htmx-ext-sse.js"></script>
+				// <script src="/assets/vendor/resclient.min.js"></script>
+				<script src="https://cdn.jsdelivr.net/npm/resclient@latest/dist/resclient.js"></script>
+				<script src="https://cdn.jsdelivr.net/gh/gnat/surreal@main/surreal.js"></script>
+			</head>
+			<body class="has-navbar-fixed-top">
+				@navbar(vars, false)
+				<section
+					{ tempil.AttrFunc(func(a tempil.Attr) {
+						a.ID(HxTarget)
+						a.Class("section")
+					})... }
+				>
+					@comp
+				</section>
+			</body>
+		</html>
+	}
+}
+
+templ navbar(vars *tempil.Vars, oob bool) {
+	<nav
+		id="base_nav"
+		if oob {
+			hx-swap-oob="true"
+		}
+		class="navbar is-fixed-top is-link"
+		role="navigation"
+		aria-label="main navigation"
+	>
+		<div class="container is-widescreen">
+			<div class="navbar-brand">
+				<a
+					{ tempil.AttrFunc(func(a tempil.Attr) {
+						a.HxGet("/")
+						a.HxTarget(HxTarget)
+						a.HxPushUrl(true)
+						a.Class("navbar-item")						
+					})... }
+				>Home</a>
+				<a
+					role="button"
+					class="navbar-burger"
+					aria-label="menu"
+					aria-expanded="false"
+					data-target="navbarBasicExample"
+				>
+					<span aria-hidden="true"></span>
+					<span aria-hidden="true"></span>
+					<span aria-hidden="true"></span>
+				</a>
+			</div>
+			<div id="navbarBasicExample" class="navbar-menu">
+				<div class="navbar-start">
+					<a
+						{ tempil.AttrFunc(func(a tempil.Attr) {
+							a.HxGet("/nodes")
+							a.HxTarget(HxTarget)
+							a.HxPushUrl(true)
+							a.Class("navbar-item")
+							if vars.HxTargetHasPrefix(HxTarget){
+								a.Class("is-active")
+							}
+						})... }
+					>nodes</a>
+				</div>
+				<div class="navbar-end">
+					<div class="navbar-item">
+						<div class="buttons">
+							<form action="/logout" method="post">
+								<div class="field">
+									<button type="submit" class="button is-danger">
+										logout
+									</button>
+								</div>
+							</form>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+	</nav>
+}

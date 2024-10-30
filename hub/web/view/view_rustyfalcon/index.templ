@@ -1,0 +1,36 @@
+package view_rustyfalcon
+
+import (
+ "github.com/frbrno/iot/lib/go/tempil"
+
+	"github.com/frbrno/iot/hub/web/view"
+)
+
+const HxTarget = "view_rustyfalcon"
+
+templ Index() {
+	<h3 class="title">Hello { HxTarget }</h3>
+	<div hx-ext="sse" sse-connect="/sse?subs=a;b;c;*.*.comecommand.>;">
+		<span>events:</span>
+		<div
+			sse-swap="rusty_falcon_all"
+			hx-swap="afterbegin"
+			hx-on--after-swap="after-swap(this);"
+		></div>
+	</div>
+	<script>
+		function after-swap(el){
+			if (el.childElementCount > 100) {
+				el.removeChild(el.lastElementChild);
+			}
+		}
+	</script>
+}
+
+templ Layout(v *tempil.Vars, comp templ.Component) {
+	@view.Layout(v, layout(comp))
+}
+
+templ layout(comp templ.Component) {
+	@comp
+}

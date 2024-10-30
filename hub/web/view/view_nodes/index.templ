@@ -1,0 +1,35 @@
+package view_nodes
+
+import (
+ "github.com/frbrno/iot/lib/go/tempil"
+	"github.com/frbrno/iot/hub/web/view"
+)
+
+const HxTarget = "view_nodes"
+
+templ Index() {
+	<h3 class="title">Hello { HxTarget }</h3>
+	
+	<script>
+	const ResClient = resclient.default;
+	const client = new ResClient('ws://127.0.0.1:16800');
+	client.get('hub.nodes').then(collection => {
+		console.log(collection.list);
+		collection.on('add', (e)=>{
+			console.log("hub.nodes.add", e);
+		});
+		collection.on('remove', (e)=>{
+			console.log("hub.nodes.remove", e);
+		});
+	});
+
+	</script>
+}
+
+templ Layout(v *tempil.Vars, comp templ.Component) {
+	@view.Layout(v, layout(comp))
+}
+
+templ layout(comp templ.Component) {
+	@comp
+}

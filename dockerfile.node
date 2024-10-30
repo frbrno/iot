@@ -1,0 +1,23 @@
+FROM docker.io/golang:1.23.2-alpine AS build
+
+ARG NODE="CHANGE ME - rusty_falcon for example"
+
+WORKDIR /src
+
+COPY ./node/go.mod ./node/go.sum ./node/*.go ./node
+COPY ./node/${NODE}/ctrler ./node/${NODE}/ctrler
+RUN go env -w GOCACHE=/go-cache
+RUN go env -w GOMODCACHE=/gomod-cache
+RUN --mount=type=cache,target=/gomod-cache --mount=type=cache,target=/go-cache \
+    cd node; CGO_ENABLED=0 GOOS=linux go build -o /app ./${NODE}/ctrler/*.go
+
+FROM gcr.io/distroless/static-debian12
+
+WORKDIR /node
+
+COPY --from=build /app /app
+
+EXPOSE 8080
+
+ENTRYPOINT ["/app"]
+

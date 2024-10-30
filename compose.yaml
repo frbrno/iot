@@ -1,0 +1,61 @@
+services:
+  hub:
+    hostname: hub
+    build:
+      context: .
+      dockerfile: ./dockerfile.hub
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    environment:
+      - TZ=America/Sao_Paulo
+    depends_on:
+      - nats
+      - resgate
+
+  rusty_falcon_1:
+    hostname: rusty_falcon_1
+    build:
+      context: .
+      dockerfile: ./dockerfile.node
+      args:
+        NODE: rusty_falcon
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    environment:
+      - TZ=America/Sao_Paulo
+    depends_on:
+      - nats
+      - resgate
+  
+  nats:
+    hostname: nats
+    image: docker.io/nats
+    restart: unless-stopped
+    ports: 
+        - "1880:1880"
+        - "4222:4222" 
+        - "8222:8222"
+    environment:
+        - TZ=America/Sao_Paulo
+    volumes:
+        - ./etc/container/volumes/nats/data:/data
+        - ./etc/container/volumes/nats/nats-server.conf:/etc/nats/nats-server.conf
+    command:
+        - "--js"
+        - "--sd=/data"
+        - "--config=/etc/nats/nats-server.conf"
+        - "--debug"
+
+  resgate:
+    hostname: resgate
+    image: docker.io/resgateio/resgate
+    restart: unless-stopped
+    ports: 
+        - "16800:8080" 
+    environment:
+        - TZ=America/Sao_Paulo
+    command: "--nats nats://nats:4222"
+    depends_on:
+      - nats
